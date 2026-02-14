@@ -295,6 +295,92 @@ func TestDetectProloguesFromELF(t *testing.T) {
 	}
 }
 
+func TestDetectProloguesFromELF_C(t *testing.T) {
+	const cSource = "testdata/demo-app.c"
+
+	tests := []struct {
+		name      string
+		compiler  string
+		args      []string // compiler flags before -o <output> <source>
+		minCounts map[prologo.PrologueType]int
+	}{
+		{
+			name:     "amd64/gcc/optimized",
+			compiler: "gcc",
+			args:     []string{"-O2"},
+			minCounts: map[prologo.PrologueType]int{
+				prologo.PrologueClassic: 1,
+			},
+		},
+		{
+			name:     "amd64/gcc/unoptimized",
+			compiler: "gcc",
+			args:     []string{"-O0", "-fno-omit-frame-pointer"},
+			minCounts: map[prologo.PrologueType]int{
+				prologo.PrologueClassic: 1,
+			},
+		},
+		{
+			name:     "arm64/clang/optimized",
+			compiler: "clang",
+			args:     []string{"--target=aarch64-linux-gnu", "-c", "-O2"},
+			minCounts: map[prologo.PrologueType]int{
+				prologo.PrologueSTPFramePair: 1,
+			},
+		},
+		{
+			name:     "arm64/clang/unoptimized",
+			compiler: "clang",
+			args:     []string{"--target=aarch64-linux-gnu", "-c", "-O0"},
+			minCounts: map[prologo.PrologueType]int{
+				prologo.PrologueSubSP: 1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := exec.LookPath(tt.compiler); err != nil {
+				t.Skipf("%s not found, skipping", tt.compiler)
+			}
+
+			outPath := filepath.Join(t.TempDir(), "demo-app-c")
+			args := append(tt.args, "-o", outPath, cSource)
+
+			cmd := exec.Command(tt.compiler, args...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("failed to compile %s: %v\n%s", cSource, err, out)
+			}
+
+			f, err := os.Open(outPath)
+			if err != nil {
+				t.Fatalf("failed to open compiled binary: %v", err)
+			}
+			defer f.Close()
+
+			prologues, err := prologo.DetectProloguesFromELF(f)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(prologues) == 0 {
+				t.Fatal("expected at least one prologue, got none")
+			}
+
+			counts := make(map[prologo.PrologueType]int)
+			for _, p := range prologues {
+				counts[p.Type]++
+			}
+			t.Logf("total prologues: %d, by type: %v", len(prologues), counts)
+
+			for typ, min := range tt.minCounts {
+				if counts[typ] < min {
+					t.Errorf("expected at least %d %s prologue(s), got %d", min, typ, counts[typ])
+				}
+			}
+		})
+	}
+}
+
 func TestDetectProloguesFromELF_InvalidReader(t *testing.T) {
 	r := bytes.NewReader([]byte{0x00, 0x01, 0x02, 0x03})
 	_, err := prologo.DetectProloguesFromELF(r)
