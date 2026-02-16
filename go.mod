@@ -1,4 +1,4 @@
-module github.com/maxgio92/prologo
+module github.com/maxgio92/resurgo
 
 go 1.25.7
 

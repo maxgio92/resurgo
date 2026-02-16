@@ -1,4 +1,4 @@
-package prologo_test
+package resurgo_test
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/maxgio92/prologo"
+	"github.com/maxgio92/resurgo"
 )
 
 const (
@@ -30,27 +30,27 @@ func TestDetectProloguesAMD64(t *testing.T) {
 		code      []byte
 		baseAddr  uint64
 		wantCount int
-		wantType  prologo.PrologueType
+		wantType  resurgo.PrologueType
 		wantAddr  uint64
 	}{
 		{
 			// nop; push rbp; mov rbp, rsp
 			// The leading nop ensures push rbp is not at start-of-input,
 			// so only the classic pattern fires.
-			name:      string(prologo.PrologueClassic),
+			name:      string(resurgo.PrologueClassic),
 			code:      []byte{0x90, 0x55, 0x48, 0x89, 0xe5},
 			baseAddr:  0,
 			wantCount: 1,
-			wantType:  prologo.PrologueClassic,
+			wantType:  resurgo.PrologueClassic,
 			wantAddr:  1,
 		},
 		{
 			// sub rsp, 0x20 at start of code (no preceding instruction)
-			name:      string(prologo.PrologueNoFramePointer),
+			name:      string(resurgo.PrologueNoFramePointer),
 			code:      []byte{0x48, 0x83, 0xec, 0x20},
 			baseAddr:  0,
 			wantCount: 1,
-			wantType:  prologo.PrologueNoFramePointer,
+			wantType:  resurgo.PrologueNoFramePointer,
 			wantAddr:  0,
 		},
 		{
@@ -60,16 +60,16 @@ func TestDetectProloguesAMD64(t *testing.T) {
 			code:      []byte{0x90, 0x53, 0x48, 0x83, 0xec, 0x20},
 			baseAddr:  0,
 			wantCount: 1,
-			wantType:  prologo.PrologueNoFramePointer,
+			wantType:  resurgo.PrologueNoFramePointer,
 			wantAddr:  2,
 		},
 		{
 			// push rbp; nop — push rbp at start, not followed by mov rbp, rsp
-			name:      string(prologo.ProloguePushOnly),
+			name:      string(resurgo.ProloguePushOnly),
 			code:      []byte{0x55, 0x90},
 			baseAddr:  0,
 			wantCount: 1,
-			wantType:  prologo.ProloguePushOnly,
+			wantType:  resurgo.ProloguePushOnly,
 			wantAddr:  0,
 		},
 		{
@@ -92,7 +92,7 @@ func TestDetectProloguesAMD64(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prologues, err := prologo.DetectPrologues(tt.code, tt.baseAddr, prologo.ArchAMD64)
+			prologues, err := resurgo.DetectPrologues(tt.code, tt.baseAddr, resurgo.ArchAMD64)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -132,40 +132,40 @@ func TestDetectProloguesARM64(t *testing.T) {
 		code      []byte
 		baseAddr  uint64
 		wantCount int
-		wantType  prologo.PrologueType
+		wantType  resurgo.PrologueType
 		wantAddr  uint64
 	}{
 		{
-			name:      string(prologo.PrologueSTPFramePair),
+			name:      string(resurgo.PrologueSTPFramePair),
 			code:      arm64Insn(stpX29X30, movX29SP),
 			baseAddr:  0,
 			wantCount: 1,
-			wantType:  prologo.PrologueSTPFramePair,
+			wantType:  resurgo.PrologueSTPFramePair,
 			wantAddr:  0,
 		},
 		{
-			name:      string(prologo.PrologueSTRLRPreIndex),
+			name:      string(resurgo.PrologueSTRLRPreIndex),
 			code:      arm64Insn(strX30),
 			baseAddr:  0,
 			wantCount: 1,
-			wantType:  prologo.PrologueSTRLRPreIndex,
+			wantType:  resurgo.PrologueSTRLRPreIndex,
 			wantAddr:  0,
 		},
 		{
-			name:      string(prologo.PrologueSubSP),
+			name:      string(resurgo.PrologueSubSP),
 			code:      arm64Insn(subSP),
 			baseAddr:  0,
 			wantCount: 1,
-			wantType:  prologo.PrologueSubSP,
+			wantType:  resurgo.PrologueSubSP,
 			wantAddr:  0,
 		},
 		{
 			// stp x29, x30, [sp, #-16]! followed by nop (not mov x29, sp)
-			name:      string(prologo.PrologueSTPOnly),
+			name:      string(resurgo.PrologueSTPOnly),
 			code:      arm64Insn(stpX29X30, nop),
 			baseAddr:  0,
 			wantCount: 1,
-			wantType:  prologo.PrologueSTPOnly,
+			wantType:  resurgo.PrologueSTPOnly,
 			wantAddr:  0,
 		},
 		{
@@ -187,7 +187,7 @@ func TestDetectProloguesARM64(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prologues, err := prologo.DetectPrologues(tt.code, tt.baseAddr, prologo.ArchARM64)
+			prologues, err := resurgo.DetectPrologues(tt.code, tt.baseAddr, resurgo.ArchARM64)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -209,7 +209,7 @@ func TestDetectProloguesARM64(t *testing.T) {
 }
 
 func TestDetectPrologues_UnsupportedArch(t *testing.T) {
-	_, err := prologo.DetectPrologues([]byte{0x00}, 0, prologo.Arch("mips"))
+	_, err := resurgo.DetectPrologues([]byte{0x00}, 0, resurgo.Arch("mips"))
 	if err == nil {
 		t.Fatal("expected error for unsupported architecture, got nil")
 	}
@@ -220,39 +220,39 @@ func TestDetectProloguesFromELF_Go(t *testing.T) {
 		name      string
 		goarch    string
 		buildArgs []string
-		minCounts map[prologo.PrologueType]int
+		minCounts map[resurgo.PrologueType]int
 	}{
 		{
 			name:      "amd64/optimized",
 			goarch:    "amd64",
 			buildArgs: nil,
-			minCounts: map[prologo.PrologueType]int{
-				prologo.PrologueClassic:        1,
-				prologo.PrologueNoFramePointer: 1,
+			minCounts: map[resurgo.PrologueType]int{
+				resurgo.PrologueClassic:        1,
+				resurgo.PrologueNoFramePointer: 1,
 			},
 		},
 		{
 			name:      "amd64/unoptimized",
 			goarch:    "amd64",
 			buildArgs: []string{"-gcflags=all=-N -l"},
-			minCounts: map[prologo.PrologueType]int{
-				prologo.PrologueClassic: 1,
+			minCounts: map[resurgo.PrologueType]int{
+				resurgo.PrologueClassic: 1,
 			},
 		},
 		{
 			name:      "arm64/optimized",
 			goarch:    "arm64",
 			buildArgs: nil,
-			minCounts: map[prologo.PrologueType]int{
-				prologo.PrologueSTRLRPreIndex: 1,
+			minCounts: map[resurgo.PrologueType]int{
+				resurgo.PrologueSTRLRPreIndex: 1,
 			},
 		},
 		{
 			name:      "arm64/unoptimized",
 			goarch:    "arm64",
 			buildArgs: []string{"-gcflags=all=-N -l"},
-			minCounts: map[prologo.PrologueType]int{
-				prologo.PrologueSTRLRPreIndex: 1,
+			minCounts: map[resurgo.PrologueType]int{
+				resurgo.PrologueSTRLRPreIndex: 1,
 			},
 		},
 	}
@@ -275,7 +275,7 @@ func TestDetectProloguesFromELF_Go(t *testing.T) {
 			}
 			defer f.Close()
 
-			prologues, err := prologo.DetectProloguesFromELF(f)
+			prologues, err := resurgo.DetectProloguesFromELF(f)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -283,7 +283,7 @@ func TestDetectProloguesFromELF_Go(t *testing.T) {
 				t.Fatal("expected at least one prologue, got none")
 			}
 
-			counts := make(map[prologo.PrologueType]int)
+			counts := make(map[resurgo.PrologueType]int)
 			for _, p := range prologues {
 				counts[p.Type]++
 			}
@@ -305,7 +305,7 @@ func TestDetectProloguesFromELF_C(t *testing.T) {
 		name      string
 		compiler  string
 		args      []string
-		minCounts map[prologo.PrologueType]int
+		minCounts map[resurgo.PrologueType]int
 	}{
 		{
 			name:     "amd64/gcc/optimized",
@@ -316,24 +316,24 @@ func TestDetectProloguesFromELF_C(t *testing.T) {
 			name:     "amd64/gcc/unoptimized",
 			compiler: "gcc",
 			args:     []string{"-O0", "-fno-omit-frame-pointer"},
-			minCounts: map[prologo.PrologueType]int{
-				prologo.PrologueClassic: 1,
+			minCounts: map[resurgo.PrologueType]int{
+				resurgo.PrologueClassic: 1,
 			},
 		},
 		{
 			name:     "arm64/clang/optimized",
 			compiler: "clang",
 			args:     []string{"--target=aarch64-linux-gnu", "-c", "-O2"},
-			minCounts: map[prologo.PrologueType]int{
-				prologo.PrologueSTPFramePair: 1,
+			minCounts: map[resurgo.PrologueType]int{
+				resurgo.PrologueSTPFramePair: 1,
 			},
 		},
 		{
 			name:     "arm64/clang/unoptimized",
 			compiler: "clang",
 			args:     []string{"--target=aarch64-linux-gnu", "-c", "-O0"},
-			minCounts: map[prologo.PrologueType]int{
-				prologo.PrologueSubSP: 1,
+			minCounts: map[resurgo.PrologueType]int{
+				resurgo.PrologueSubSP: 1,
 			},
 		},
 	}
@@ -352,7 +352,7 @@ func TestDetectProloguesFromELF_C(t *testing.T) {
 
 func TestDetectProloguesFromELF_InvalidReader(t *testing.T) {
 	r := bytes.NewReader([]byte{0x00, 0x01, 0x02, 0x03})
-	_, err := prologo.DetectProloguesFromELF(r)
+	_, err := resurgo.DetectProloguesFromELF(r)
 	if err == nil {
 		t.Fatal("expected error for invalid ELF data, got nil")
 	}
@@ -394,27 +394,27 @@ func gccMajorVersion(compiler string) int {
 //   - GCC 13-14: emits endbr64 (CET) followed immediately by push rbx;
 //     sub rsp, which is detected as NoFramePointer after the ENDBR skip
 //     and relaxed boundary check.
-func gccOptimizedExpectations(t *testing.T) map[prologo.PrologueType]int {
+func gccOptimizedExpectations(t *testing.T) map[resurgo.PrologueType]int {
 	t.Helper()
 	v := gccMajorVersion("gcc")
 	switch {
 	case v >= 15:
-		return map[prologo.PrologueType]int{
-			prologo.ProloguePushOnly: 1,
+		return map[resurgo.PrologueType]int{
+			resurgo.ProloguePushOnly: 1,
 		}
 	case v >= 13:
-		return map[prologo.PrologueType]int{
-			prologo.ProloguePushOnly: 1,
+		return map[resurgo.PrologueType]int{
+			resurgo.ProloguePushOnly: 1,
 		}
 	default:
 		t.Logf("gcc %d: no version-specific prologue expectation", v)
-		return map[prologo.PrologueType]int{}
+		return map[resurgo.PrologueType]int{}
 	}
 }
 
 // compileAndDetect compiles cSource with the given compiler and flags, runs
 // prologue detection on the result, and returns the detected prologues.
-func compileAndDetect(t *testing.T, compiler string, args []string, cSource string) []prologo.Prologue {
+func compileAndDetect(t *testing.T, compiler string, args []string, cSource string) []resurgo.Prologue {
 	t.Helper()
 	if _, err := exec.LookPath(compiler); err != nil {
 		t.Skipf("%s not found, skipping", compiler)
@@ -434,7 +434,7 @@ func compileAndDetect(t *testing.T, compiler string, args []string, cSource stri
 	}
 	defer f.Close()
 
-	prologues, err := prologo.DetectProloguesFromELF(f)
+	prologues, err := resurgo.DetectProloguesFromELF(f)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -443,13 +443,13 @@ func compileAndDetect(t *testing.T, compiler string, args []string, cSource stri
 
 // assertPrologues verifies that prologues is non-empty and that the
 // per-type counts meet the specified minimums.
-func assertPrologues(t *testing.T, prologues []prologo.Prologue, minCounts map[prologo.PrologueType]int) {
+func assertPrologues(t *testing.T, prologues []resurgo.Prologue, minCounts map[resurgo.PrologueType]int) {
 	t.Helper()
 	if len(prologues) == 0 {
 		t.Fatal("expected at least one prologue, got none")
 	}
 
-	counts := make(map[prologo.PrologueType]int)
+	counts := make(map[resurgo.PrologueType]int)
 	for _, p := range prologues {
 		counts[p.Type]++
 	}

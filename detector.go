@@ -1,4 +1,4 @@
-package prologo
+package resurgo
 
 import (
 	"debug/elf"

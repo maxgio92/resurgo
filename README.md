@@ -1,4 +1,4 @@
-# prologo
+# resurgo
 
 A Go library for static function recovery from executable binaries.
 
@@ -20,7 +20,7 @@ It works with raw bytes from any binary format as well as parsing ELF files.
 
 ### Function prologues
 
-Prologues are one of the metadata that prologo recovers about functions. They are detected by recognizing common instruction patterns at function entry points.
+Prologues are one of the metadata that resurgo recovers about functions. They are detected by recognizing common instruction patterns at function entry points.
 
 #### x86_64
 
@@ -92,7 +92,7 @@ The STP saves both x29 and x30 to the stack, but the function does not execute `
 
 ## Usage
 
-Import prologo in your Go project:
+Import resurgo in your Go project:
 
 ```go
 package main
@@ -102,7 +102,7 @@ import (
     "log"
     "os"
 
-    "github.com/maxgio92/prologo"
+    "github.com/maxgio92/resurgo"
 )
 
 func main() {
@@ -112,7 +112,7 @@ func main() {
     }
     defer f.Close()
 
-    prologues, err := prologo.DetectProloguesFromELF(f)
+    prologues, err := resurgo.DetectProloguesFromELF(f)
     if err != nil {
         log.Fatal(err)
     }

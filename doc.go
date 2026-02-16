@@ -1,4 +1,4 @@
-// Package prologo detects function prologues from raw machine code or ELF
+// Package resurgo detects function prologues from raw machine code or ELF
 // binaries using instruction-level disassembly.
 //
 // It recognizes several common prologue patterns including classic frame pointer
@@ -8,4 +8,4 @@
 // Use [DetectPrologues] to analyze raw bytes directly, or
 // [DetectProloguesFromELF] to extract and analyze the .text section of an ELF
 // binary.
-package prologo
+package resurgo

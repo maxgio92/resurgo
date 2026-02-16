@@ -1,17 +1,17 @@
-package prologo_test
+package resurgo_test
 
 import (
 	"fmt"
 	"log"
 	"os"
 
-	"github.com/maxgio92/prologo"
+	"github.com/maxgio92/resurgo"
 )
 
 func ExampleDetectPrologues() {
 	// x86-64 machine code: nop; push rbp; mov rbp, rsp
 	code := []byte{0x90, 0x55, 0x48, 0x89, 0xe5}
-	prologues, err := prologo.DetectPrologues(code, 0x1000, prologo.ArchAMD64)
+	prologues, err := resurgo.DetectPrologues(code, 0x1000, resurgo.ArchAMD64)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func ExampleDetectProloguesFromELF() {
 	}
 	defer f.Close()
 
-	prologues, err := prologo.DetectProloguesFromELF(f)
+	prologues, err := resurgo.DetectProloguesFromELF(f)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package prologo
+package resurgo
 
 // Arch represents a CPU architecture.
 type Arch string
