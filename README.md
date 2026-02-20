@@ -1,5 +1,9 @@
 # resurgo
 
+[![CI](https://github.com/maxgio92/resurgo/actions/workflows/ci.yml/badge.svg)](https://github.com/maxgio92/resurgo/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/maxgio92/resurgo.svg)](https://pkg.go.dev/github.com/maxgio92/resurgo)
+[![GitHub Tag](https://img.shields.io/github/v/tag/maxgio92/resurgo)](https://github.com/maxgio92/resurgo/tags)
+
 A Go library for static function recovery from executable binaries.
 
 It works with raw bytes from any binary format as well as parsing ELF files.
