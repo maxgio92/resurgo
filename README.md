@@ -1,10 +1,10 @@
-# resurgo
+<h1 align="center"><img src="logo.png" width="256" height="256" alt="ResurGo"></h1>
 
 [![CI](https://github.com/maxgio92/resurgo/actions/workflows/ci.yml/badge.svg)](https://github.com/maxgio92/resurgo/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/maxgio92/resurgo.svg)](https://pkg.go.dev/github.com/maxgio92/resurgo)
 [![GitHub Tag](https://img.shields.io/github/v/tag/maxgio92/resurgo)](https://github.com/maxgio92/resurgo/tags)
 
-A Go library for static function recovery from executable binaries.
+ResurGo is a Go library for static function recovery from executable binaries.
 
 It works with raw bytes from any binary format as well as parsing ELF files.
 
@@ -40,7 +40,7 @@ resurgo detects the following function prologue patterns:
 
 For detailed explanations of each pattern, see [docs/PROLOGUES.md](docs/PROLOGUES.md).
 
-### Call site analysis
+### Call sites
 
 resurgo also identifies functions through call site analysis by detecting `CALL` and `JMP` instructions and extracting their target addresses. This approach:
 
@@ -67,6 +67,8 @@ resurgo also identifies functions through call site analysis by detecting `CALL`
 For detailed explanations, see [docs/CALLSITES.md](docs/CALLSITES.md).
 
 ## Usage
+
+### Detect function prologues
 
 Import resurgo in your Go project:
 
@@ -108,7 +110,7 @@ func main() {
 [push-only] 0x401060: push rbx
 ```
 
-### Call site analysis
+### Detect call sites
 
 ```go
 package main
