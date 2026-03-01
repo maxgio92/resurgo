@@ -55,5 +55,5 @@ jobs:
       - name: Install C toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc binutils
+          sudo apt-get install -y gcc binutils gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
       - run: go test -v -tags e2e ./e2e/...
