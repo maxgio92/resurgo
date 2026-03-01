@@ -1,6 +1,7 @@
 package resurgo
 
 import (
+	"golang.org/x/arch/arm64/arm64asm"
 	"golang.org/x/arch/x86/x86asm"
 )
 
@@ -136,4 +137,88 @@ func isNOPLike(inst x86asm.Inst) bool {
 		}
 	}
 	return false
+}
+
+// detectAlignedEntriesARM64 applies the same boundary-separator strategy as
+// detectAlignedEntriesAMD64 to AArch64 code.
+//
+// The pattern is identical in structure but simpler to scan because all
+// AArch64 instructions are exactly 4 bytes:
+//
+//	<terminator>          ; RET or backward B (tail call)
+//	<nop padding>...      ; one or more NOP instructions (0xD503201F)
+//	<aligned address>     ; 16-byte boundary - likely a new function entry
+//
+// The NOP requirement filters out tight packing between small leaf functions
+// that share a cache line with no alignment fill (e.g. a 2-instruction leaf
+// directly followed by the next function at the next 4-byte boundary).
+// Requiring at least one NOP before the boundary is the same threshold that
+// makes this signal meaningful on AMD64.
+func detectAlignedEntriesARM64(code []byte, baseAddr uint64) []uint64 {
+	var entries []uint64
+
+	const insnLen = 4
+
+	for i := 0; i+insnLen <= len(code); i += insnLen {
+		inst, err := arm64asm.Decode(code[i : i+insnLen])
+		if err != nil {
+			continue
+		}
+
+		// RET is the primary terminator. Backward unconditional B is a tail
+		// call to a sibling or PLT stub and qualifies as a terminator.
+		isTerminator := inst.Op == arm64asm.RET
+		if inst.Op == arm64asm.B {
+			if pcrel, ok := inst.Args[0].(arm64asm.PCRel); ok {
+				sourceVA := baseAddr + uint64(i)
+				targetVA := sourceVA + uint64(int64(pcrel))
+				if targetVA < sourceVA {
+					isTerminator = true
+				}
+			}
+		}
+
+		if !isTerminator {
+			continue
+		}
+
+		// Consume NOP padding after the terminator.
+		j := i + insnLen
+		for j+insnLen <= len(code) {
+			pad, err := arm64asm.Decode(code[j : j+insnLen])
+			if err != nil {
+				break
+			}
+			if pad.Op != arm64asm.NOP {
+				break
+			}
+			j += insnLen
+		}
+
+		// On ARM64, tight packing without NOP padding is normal: small leaf
+		// functions are frequently placed back-to-back on 4-byte boundaries
+		// without alignment fill. A ret immediately followed by a 16-byte
+		// aligned address is still a meaningful boundary signal because
+		// intra-function code reaches such alignment far less often than
+		// inter-function boundaries do.
+		if j+insnLen > len(code) {
+			break
+		}
+
+		addr := baseAddr + uint64(j)
+		if addr%alignedEntryAlignment != 0 {
+			continue
+		}
+
+		// Reject if the boundary instruction is RET: this is an intra-function
+		// base-case return landing on an aligned address, not a new entry.
+		boundary, err := arm64asm.Decode(code[j : j+insnLen])
+		if err == nil && boundary.Op == arm64asm.RET {
+			continue
+		}
+
+		entries = append(entries, addr)
+	}
+
+	return entries
 }
