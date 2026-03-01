@@ -83,14 +83,14 @@ func compileCBinary(t *testing.T, compiler string, cflags []string, src, out str
 	}
 }
 
-// stripSymbolTable strips the symbol table from src, writing the result to
-// dst. Skips the test if strip is not found in PATH.
-func stripSymbolTable(t *testing.T, src, dst string) {
+// stripSymbolTable strips the symbol table from src using the given strip
+// tool, writing the result to dst. Skips the test if the tool is not in PATH.
+func stripSymbolTable(t *testing.T, stripTool, src, dst string) {
 	t.Helper()
-	if _, err := exec.LookPath("strip"); err != nil {
-		t.Skip("strip not found in PATH, skipping")
+	if _, err := exec.LookPath(stripTool); err != nil {
+		t.Skipf("%s not found in PATH, skipping", stripTool)
 	}
-	cmd := exec.Command("strip", "--strip-all", "-o", dst, src)
+	cmd := exec.Command(stripTool, "--strip-all", "-o", dst, src)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("strip failed: %v\n%s", err, out)
 	}
@@ -130,9 +130,12 @@ func groundTruthVAs(t *testing.T, binPath string, wantNames []string) map[string
 
 // measure compiles src, strips it, runs DetectFunctionsFromELF, and returns
 // per-function detection details alongside aggregated detectionStats.
+// stripTool is the strip binary to use (e.g. "strip" for the host arch,
+// "aarch64-linux-gnu-strip" for cross-compiled ARM64 binaries).
 func measure(
 	t *testing.T,
 	compiler string,
+	stripTool string,
 	cflags []string,
 	src string,
 	userFuncs []string,
@@ -144,7 +147,7 @@ func measure(
 	stripped := filepath.Join(dir, "binary-stripped")
 
 	compileCBinary(t, compiler, cflags, src, unstripped)
-	stripSymbolTable(t, unstripped, stripped)
+	stripSymbolTable(t, stripTool, unstripped, stripped)
 
 	truth = groundTruthVAs(t, unstripped, userFuncs)
 	if len(truth) < len(userFuncs) {
@@ -222,7 +225,7 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized(t *testing.T) {
 	userFuncs := []string{"observe", "add", "multiply", "subtract", "divide", "main"}
 
 	byVA, truth, stats := measure(
-		t, "gcc", []string{"-O0", "-fno-inline"},
+		t, "gcc", "strip", []string{"-O0", "-fno-inline"},
 		"../testdata/demo-app.c", userFuncs,
 	)
 	stats.logSummary(t)
@@ -267,7 +270,7 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 	userFuncs := []string{"add", "mul", "factorial", "fib", "main"}
 
 	byVA, truth, stats := measure(
-		t, "gcc", []string{"-O2"},
+		t, "gcc", "strip", []string{"-O2"},
 		"testdata/stripped-app.c", userFuncs,
 	)
 	stats.logSummary(t)
@@ -303,4 +306,48 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 	}
 }
 
+// TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64 validates boundary
+// detection on a cross-compiled ARM64 binary and documents its known
+// limitations.
+//
+// The test cross-compiles testdata/stripped-app.c with aarch64-linux-gnu-gcc
+// at -O2. On ARM64, gcc packs small leaf functions back-to-back on 4-byte
+// boundaries without 16-byte alignment fill: mul (2 instructions) lands at a
+// non-16-byte-aligned address and is never called directly from any site in
+// the binary (all calls to it were inlined by the compiler). It is therefore
+// undetectable by any current strategy (no prologue, no call-site edge, no
+// 16-byte boundary).
+//
+// This test does not assert full recall. It asserts the minimum that can be
+// reliably expected (fib at high confidence) and captures a snapshot so
+// improvements and regressions are visible in CI.
+//
+// Skipped if aarch64-linux-gnu-gcc or aarch64-linux-gnu-strip are not in PATH.
+func TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64(t *testing.T) {
+	userFuncs := []string{"add", "mul", "factorial", "fib", "main"}
+
+	byVA, truth, stats := measure(
+		t, "aarch64-linux-gnu-gcc", "aarch64-linux-gnu-strip",
+		[]string{"-O2"},
+		"testdata/stripped-app.c", userFuncs,
+	)
+	stats.logSummary(t)
+
+	// fib is doubly recursive and must always reach high confidence.
+	va := truth["fib"]
+	if c, ok := byVA[va]; !ok {
+		t.Errorf("fib(0x%x): not detected (expected high confidence)", va)
+	} else if c.Confidence != resurgo.ConfidenceHigh {
+		t.Errorf("fib(0x%x): confidence=%s, want high", va, c.Confidence)
+	}
+
+	// Regression guard: at least 4/5 functions must be found.
+	if stats.truePositives < 4 {
+		t.Errorf("true positives: %d/%d - regression? expected at least 4; missed: %v",
+			stats.truePositives, stats.total, stats.missed)
+	}
+
+	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
+		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
+}
 

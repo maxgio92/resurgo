@@ -56,4 +56,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc binutils
+      - name: Install ARM64 cross-compiler
+        run: sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
       - run: go test -v -tags e2e ./e2e/...
