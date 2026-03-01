@@ -43,3 +43,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc clang
       - run: go test -v -race ./...
+
+  test-e2e:
+    name: Test (e2e)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: go.mod
+      - name: Install C toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc binutils
+      - run: go test -v -tags e2e ./e2e/...
