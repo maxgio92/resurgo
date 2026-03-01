@@ -209,6 +209,25 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 		}
 	}
 
+	// Add alignment-based candidates for functions that have no prologue and
+	// no call-site signal (e.g. pure-leaf functions with external linkage
+	// that were never called due to inlining or compile-time evaluation).
+	//
+	// These receive ConfidenceLow because the pattern (ret + NOP padding →
+	// 16-byte aligned address) is reliable for function separators but can
+	// also match intra-function alignment at loop heads.
+	if arch == ArchAMD64 {
+		for _, addr := range detectAlignedEntriesAMD64(code, baseAddr) {
+			if _, exists := candidates[addr]; !exists {
+				candidates[addr] = &FunctionCandidate{
+					Address:       addr,
+					DetectionType: DetectionAlignedEntry,
+					Confidence:    ConfidenceLow,
+				}
+			}
+		}
+	}
+
 	// Convert map to sorted slice
 	result := make([]FunctionCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
