@@ -1,13 +1,149 @@
 package resurgo
 
 import (
+	"cmp"
 	"debug/elf"
 	"fmt"
 	"io"
+	"slices"
 
 	"golang.org/x/arch/arm64/arm64asm"
 	"golang.org/x/arch/x86/x86asm"
 )
+
+// DetectFunctions combines prologue detection, call site analysis, and
+// alignment-based boundary detection to identify function entry points.
+// Functions detected by multiple methods receive higher confidence ratings.
+func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandidate, error) {
+	// Detect prologues
+	prologues, err := DetectPrologues(code, baseAddr, arch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect prologues: %w", err)
+	}
+
+	// Detect call sites
+	edges, err := DetectCallSites(code, baseAddr, arch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect call sites: %w", err)
+	}
+
+	// Build a map of function candidates by address
+	candidates := make(map[uint64]*FunctionCandidate)
+
+	// Add prologue-based candidates
+	for _, p := range prologues {
+		candidates[p.Address] = &FunctionCandidate{
+			Address:       p.Address,
+			DetectionType: DetectionPrologueOnly,
+			PrologueType:  p.Type,
+			Confidence:    ConfidenceMedium, // Will be upgraded if also a call target
+		}
+	}
+
+	// Process call site edges - include both high-confidence (direct calls)
+	// and medium-confidence (unconditional jumps, which may be tail calls).
+	for _, edge := range edges {
+		if edge.Confidence != ConfidenceHigh && edge.Confidence != ConfidenceMedium {
+			continue
+		}
+
+		candidate, exists := candidates[edge.TargetAddr]
+		if exists {
+			// Address has both prologue and is called/jumped to - highest confidence
+			candidate.DetectionType = DetectionBoth
+			candidate.Confidence = ConfidenceHigh
+			if edge.Type == CallSiteCall {
+				candidate.CalledFrom = append(candidate.CalledFrom, edge.SourceAddr)
+			} else {
+				candidate.JumpedFrom = append(candidate.JumpedFrom, edge.SourceAddr)
+			}
+		} else {
+			// New candidate from call site analysis only
+			detType := DetectionCallTarget
+			if edge.Type == CallSiteJump {
+				detType = DetectionJumpTarget
+			}
+
+			calledFrom := []uint64{}
+			jumpedFrom := []uint64{}
+			if edge.Type == CallSiteCall {
+				calledFrom = []uint64{edge.SourceAddr}
+			} else {
+				jumpedFrom = []uint64{edge.SourceAddr}
+			}
+
+			candidates[edge.TargetAddr] = &FunctionCandidate{
+				Address:       edge.TargetAddr,
+				DetectionType: detType,
+				CalledFrom:    calledFrom,
+				JumpedFrom:    jumpedFrom,
+				Confidence:    ConfidenceMedium, // Call/jump target but no prologue
+			}
+		}
+	}
+
+	// Add alignment-based candidates for functions that have no prologue and
+	// no call-site signal (e.g. pure-leaf functions with external linkage
+	// that were never called due to inlining or compile-time evaluation).
+	//
+	// These receive ConfidenceLow because the pattern (ret + NOP padding →
+	// 16-byte aligned address) is reliable for function separators but can
+	// also match intra-function alignment at loop heads.
+	if arch == ArchAMD64 {
+		for _, addr := range detectAlignedEntriesAMD64(code, baseAddr) {
+			if _, exists := candidates[addr]; !exists {
+				candidates[addr] = &FunctionCandidate{
+					Address:       addr,
+					DetectionType: DetectionAlignedEntry,
+					Confidence:    ConfidenceLow,
+				}
+			}
+		}
+	}
+
+	// Convert map to sorted slice
+	result := make([]FunctionCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		result = append(result, *candidate)
+	}
+
+	slices.SortFunc(result, func(a, b FunctionCandidate) int {
+		return cmp.Compare(a.Address, b.Address)
+	})
+
+	return result, nil
+}
+
+// DetectFunctionsFromELF parses an ELF binary from the given reader, extracts
+// the .text section, and returns detected function candidates using combined
+// prologue detection, call site analysis, and alignment-based boundary detection.
+// The architecture is inferred from the ELF header.
+func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error) {
+	f, err := elf.NewFile(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ELF file: %w", err)
+	}
+	defer f.Close()
+
+	textSec := f.Section(".text")
+	if textSec == nil {
+		return nil, fmt.Errorf("no .text section found")
+	}
+
+	code, err := textSec.Data()
+	if err != nil && err != io.EOF {
+		return nil, fmt.Errorf("failed to read .text section: %w", err)
+	}
+
+	switch f.Machine {
+	case elf.EM_X86_64:
+		return DetectFunctions(code, textSec.Addr, ArchAMD64)
+	case elf.EM_AARCH64:
+		return DetectFunctions(code, textSec.Addr, ArchARM64)
+	default:
+		return nil, fmt.Errorf("unsupported ELF machine: %s", f.Machine)
+	}
+}
 
 // DetectPrologues analyzes raw machine code bytes and returns detected function
 // prologues. baseAddr is the virtual address corresponding to the start of code.
@@ -237,3 +373,4 @@ func DetectProloguesFromELF(r io.ReaderAt) ([]Prologue, error) {
 		return nil, fmt.Errorf("unsupported ELF machine: %s", f.Machine)
 	}
 }
+
