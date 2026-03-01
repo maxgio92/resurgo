@@ -89,14 +89,19 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 	// These receive ConfidenceLow because the pattern (ret + NOP padding →
 	// 16-byte aligned address) is reliable for function separators but can
 	// also match intra-function alignment at loop heads.
-	if arch == ArchAMD64 {
-		for _, addr := range detectAlignedEntriesAMD64(code, baseAddr) {
-			if _, exists := candidates[addr]; !exists {
-				candidates[addr] = &FunctionCandidate{
-					Address:       addr,
-					DetectionType: DetectionAlignedEntry,
-					Confidence:    ConfidenceLow,
-				}
+	var alignedEntries []uint64
+	switch arch {
+	case ArchAMD64:
+		alignedEntries = detectAlignedEntriesAMD64(code, baseAddr)
+	case ArchARM64:
+		alignedEntries = detectAlignedEntriesARM64(code, baseAddr)
+	}
+	for _, addr := range alignedEntries {
+		if _, exists := candidates[addr]; !exists {
+			candidates[addr] = &FunctionCandidate{
+				Address:       addr,
+				DetectionType: DetectionAlignedEntry,
+				Confidence:    ConfidenceLow,
 			}
 		}
 	}
