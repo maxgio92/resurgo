@@ -11,9 +11,11 @@ It works with raw bytes from any binary format as well as parsing ELF files.
 ## Features
 
 - **Prologue-Based Detection**: Recognizes common function entry patterns by instruction analysis
+- **Call-Site Analysis**: Identifies functions through CALL and JMP target extraction
+- **Boundary Analysis**: Recovers leaf and never-called functions via compiler alignment gaps
 - **Format-Agnostic Core**: Works on raw machine code bytes from any binary format
 - **ELF Convenience Wrapper**: Built-in support for parsing ELF executables
-- **Pattern Classification**: Labels detected prologues by type
+- **Pattern Classification**: Labels detected functions by detection type and confidence
 
 ## Supported architectures
 
@@ -65,6 +67,30 @@ resurgo also identifies functions through call site analysis by detecting `CALL`
 - `none`  - Register-indirect (cannot be statically resolved)
 
 For detailed explanations, see [docs/CALLSITES.md](docs/CALLSITES.md).
+
+### Boundary analysis
+
+resurgo also recovers function entries through boundary analysis by reading the alignment gap compilers emit between adjacent functions. When a function ends before the next 16-byte boundary, the compiler fills the dead space with NOP bytes to align the next function entry. This gap is the signal.
+
+This strategy targets functions invisible to the other two:
+
+- **Pure-leaf functions** with no frame setup and no callers (inlined or compile-time evaluated)
+
+**Pattern:**
+```
+<previous function>
+    ret                ← function terminator
+    nop nop ...        ← compiler alignment fill
+<16-byte aligned addr> ← new function entry detected here
+```
+
+**Terminators recognised:**
+- `ret` / `lret` — the primary signal; nothing falls through after a return
+- Backward unconditional `jmp` — inter-function tail calls; forward `jmp`s are excluded as they indicate intra-function branches
+
+**Confidence:** `low` — the pattern reliably identifies that *something* starts at the aligned address but cannot distinguish user functions from compiler-injected runtime scaffolding.
+
+For detailed explanations, see [docs/BOUNDARY.md](docs/BOUNDARY.md).
 
 ## Usage
 
@@ -300,7 +326,8 @@ const (
     DetectionPrologueOnly DetectionType = "prologue-only"
     DetectionCallTarget   DetectionType = "call-target"
     DetectionJumpTarget   DetectionType = "jump-target"
-    DetectionBoth         DetectionType = "both" // Prologue + called/jumped to
+    DetectionBoth         DetectionType = "both"          // Prologue + called/jumped to
+    DetectionAlignedEntry DetectionType = "aligned-entry" // Boundary analysis (ret+nop+aligned)
 )
 
 type FunctionCandidate struct {
@@ -338,30 +365,31 @@ type FunctionCandidate struct {
 │   (ASM decode)  │
 └────────┬────────┘
          │
-    ┌────┴────┐
-    ▼         ▼
-┌────────┐ ┌────────────┐
-│Prologue│ │ Call Site  │
-│Matcher │ │  Analyzer  │
-│(seq)   │ │(CALL/JMP)  │
-└───┬────┘ └─────┬──────┘
-    │             │
-    ▼             ▼
-┌────────┐ ┌────────────┐
-│[]Prolog│ │[]CallSite │
-│  ue    │ │  Edge      │
-└───┬────┘ └─────┬──────┘
-    │             │
-    └──────┬──────┘
-           ▼
-   ┌───────────────┐
-   │DetectFunctions│ ← Merge + score
-   └───────┬───────┘
-           ▼
-   ┌───────────────┐
-   │[]FunctionCand │
-   │    idate      │
-   └───────────────┘
+    ┌────┼────────────┐
+    ▼    ▼            ▼
+┌───────┐ ┌─────────┐ ┌──────────┐
+│Prologu│ │Call Site│ │Boundary  │
+│e      │ │Analyzer │ │Analyzer  │
+│Matcher│ │(CALL/   │ │(ret+nop+ │
+│       │ │ JMP)    │ │ aligned) │
+└───┬───┘ └────┬────┘ └────┬─────┘
+    │          │            │
+    ▼          ▼            ▼
+┌───────┐ ┌─────────┐ ┌──────────┐
+│[]     │ │[]Call   │ │[]aligned │
+│Prologue│ │SiteEdge │ │ entry VA │
+└───┬───┘ └────┬────┘ └────┬─────┘
+    │          │            │
+    └──────────┴─────┬──────┘
+                     ▼
+            ┌───────────────┐
+            │DetectFunctions│ ← Merge + score
+            └───────┬───────┘
+                    ▼
+            ┌───────────────┐
+            │[]FunctionCand │
+            │    idate      │
+            └───────────────┘
 ```
 
 ## Limitations
