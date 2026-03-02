@@ -14,7 +14,75 @@ const (
 	// boundary analysis: a ret/jmp terminator followed by NOP padding ending
 	// at a 16-byte aligned address.
 	DetectionAlignedEntry DetectionType = "aligned-entry"
+
+	// x86INT3 is the single-byte INT3 opcode (0xCC). Compilers emit it as
+	// inter-function padding on x86-64 when NOP fill is not used.
+	x86INT3 = byte(0xCC)
+
+	// endbr64Byte{0..3} are the four bytes of the ENDBR64 instruction
+	// (F3 0F 1E FA). ENDBR32 shares the first three bytes but ends with 0xFB.
+	// These CET indirect-branch-tracking prefixes appear at function entries
+	// on binaries compiled with -fcf-protection=branch.
+	endbr64Byte0 = byte(0xF3)
+	endbr64Byte1 = byte(0x0F)
+	endbr64Byte2 = byte(0x1E)
+	endbr64Byte3 = byte(0xFA)
+	endbr32Byte3 = byte(0xFB)
 )
+
+// isENDBR reports whether the 4 bytes at code[i:i+4] encode an ENDBR64
+// (F3 0F 1E FA) or ENDBR32 (F3 0F 1E FB) instruction.
+// golang.org/x/arch/x86/x86asm does not recognise these CET instructions,
+// so callers must skip them explicitly before invoking the decoder.
+func isENDBR(code []byte, i int) bool {
+	return i+4 <= len(code) &&
+		code[i] == endbr64Byte0 &&
+		code[i+1] == endbr64Byte1 &&
+		code[i+2] == endbr64Byte2 &&
+		(code[i+3] == endbr64Byte3 || code[i+3] == endbr32Byte3)
+}
+
+// consumePaddingAMD64 advances past NOP-like and INT3 fill bytes starting at
+// code[start] and returns the index of the first non-padding byte. It handles
+// single- and multi-byte Intel NOP variants as well as INT3 (0xCC), which some
+// compilers use as inter-function filler instead of NOP.
+func consumePaddingAMD64(code []byte, start int) int {
+	j := start
+	for j < len(code) {
+		if code[j] == x86INT3 {
+			j++
+			continue
+		}
+		pad, err := x86asm.Decode(code[j:], 64)
+		if err != nil {
+			break
+		}
+		if !isNOPLike(pad) {
+			break
+		}
+		j += pad.Len
+	}
+	return j
+}
+
+// consumePaddingARM64 advances past NOP instructions (0xD503201F) starting at
+// code[start] and returns the index of the first non-NOP instruction, or start
+// if the first instruction is already non-NOP or undecodable.
+func consumePaddingARM64(code []byte, start int) int {
+	const insnLen = 4
+	j := start
+	for j+insnLen <= len(code) {
+		pad, err := arm64asm.Decode(code[j : j+insnLen])
+		if err != nil {
+			break
+		}
+		if pad.Op != arm64asm.NOP {
+			break
+		}
+		j += insnLen
+	}
+	return j
+}
 
 // detectAlignedEntriesAMD64 scans raw x86-64 machine code bytes for the
 // pattern emitted by compilers to separate adjacent functions. code is the
@@ -36,9 +104,7 @@ func detectAlignedEntriesAMD64(code []byte, baseAddr uint64) []uint64 {
 	i := 0
 	for i < len(code) {
 		// Skip ENDBR64 / ENDBR32 transparently.
-		if i+4 <= len(code) &&
-			code[i] == 0xf3 && code[i+1] == 0x0f &&
-			code[i+2] == 0x1e && (code[i+3] == 0xfa || code[i+3] == 0xfb) {
+		if isENDBR(code, i) {
 			i += 4
 			continue
 		}
@@ -74,26 +140,8 @@ func detectAlignedEntriesAMD64(code []byte, baseAddr uint64) []uint64 {
 			continue
 		}
 
-		// Found a RET. Advance past it and consume NOP padding.
-		j := i + inst.Len
-		for j < len(code) {
-			// INT3 (0xCC) is used by some compilers as inter-function padding.
-			if code[j] == 0xcc {
-				j++
-				continue
-			}
-
-			pad, err := x86asm.Decode(code[j:], 64)
-			if err != nil {
-				// undecoded byte, end of padding
-				break
-			}
-			if !isNOPLike(pad) {
-				// first non-NOP: padding is done
-				break
-			}
-			j += pad.Len
-		}
+		// Found a terminator. Advance past it and consume NOP / INT3 padding.
+		j := consumePaddingAMD64(code, i+inst.Len)
 
 		// Reject if no padding was consumed: a bare RET immediately followed
 		// by code is intra-function (e.g. a base-case branch target).
@@ -204,19 +252,7 @@ func detectAlignedEntriesARM64(code []byte, baseAddr uint64) []uint64 {
 		}
 
 		// Consume NOP padding after the terminator.
-		j := i + insnLen
-		for j+insnLen <= len(code) {
-			pad, err := arm64asm.Decode(code[j : j+insnLen])
-			if err != nil {
-				// undecoded instruction, end of padding
-				break
-			}
-			if pad.Op != arm64asm.NOP {
-				// first non-NOP: padding is done
-				break
-			}
-			j += insnLen
-		}
+		j := consumePaddingARM64(code, i+insnLen)
 
 		// On ARM64, tight packing without NOP padding is normal: small leaf
 		// functions are frequently placed back-to-back on 4-byte boundaries
