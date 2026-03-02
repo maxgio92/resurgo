@@ -20,48 +20,6 @@ const (
 	x86INT3 = byte(0xCC)
 )
 
-// consumePaddingAMD64 advances past NOP-like and INT3 fill bytes starting at
-// code[start] and returns the index of the first non-padding byte. It handles
-// single- and multi-byte Intel NOP variants as well as INT3 (0xCC), which some
-// compilers use as inter-function filler instead of NOP.
-func consumePaddingAMD64(code []byte, start int) int {
-	j := start
-	for j < len(code) {
-		if code[j] == x86INT3 {
-			j++
-			continue
-		}
-		pad, err := x86asm.Decode(code[j:], 64)
-		if err != nil {
-			break
-		}
-		if !isNOPLike(pad) {
-			break
-		}
-		j += pad.Len
-	}
-	return j
-}
-
-// consumePaddingARM64 advances past NOP instructions (0xD503201F) starting at
-// code[start] and returns the index of the first non-NOP instruction, or start
-// if the first instruction is already non-NOP or undecodable.
-func consumePaddingARM64(code []byte, start int) int {
-	const insnLen = 4
-	j := start
-	for j+insnLen <= len(code) {
-		pad, err := arm64asm.Decode(code[j : j+insnLen])
-		if err != nil {
-			break
-		}
-		if pad.Op != arm64asm.NOP {
-			break
-		}
-		j += insnLen
-	}
-	return j
-}
-
 // detectAlignedEntriesAMD64 scans raw x86-64 machine code bytes for the
 // pattern emitted by compilers to separate adjacent functions. code is the
 // raw bytes of the executable section; baseAddr is the virtual address
@@ -164,24 +122,6 @@ func detectAlignedEntriesAMD64(code []byte, baseAddr uint64) []uint64 {
 	return entries
 }
 
-// isNOPLike reports whether inst is a NOP-class instruction used as padding:
-// - Any NOP (single or multi-byte Intel NOP family)
-// - XCHG AX, AX (0x66 0x90, a 2-byte NOP equivalent)
-// - CS/DATA16 prefix sequences that decode as NOP variants
-func isNOPLike(inst x86asm.Inst) bool {
-	if inst.Op == x86asm.NOP {
-		return true
-	}
-	// XCHG AX, AX (66 90) decodes as XCHG with AX,AX operands - a canonical
-	// 2-byte NOP. Accept any XCHG where both operands are the same register.
-	if inst.Op == x86asm.XCHG {
-		if inst.Args[0] == inst.Args[1] {
-			return true
-		}
-	}
-	return false
-}
-
 // detectAlignedEntriesARM64 applies the same boundary-separator strategy as
 // detectAlignedEntriesAMD64 to AArch64 code. code is the raw bytes of the
 // executable section; baseAddr is the virtual address corresponding to the
@@ -267,4 +207,64 @@ func detectAlignedEntriesARM64(code []byte, baseAddr uint64) []uint64 {
 	}
 
 	return entries
+}
+
+// consumePaddingAMD64 advances past NOP-like and INT3 fill bytes starting at
+// code[start] and returns the index of the first non-padding byte. It handles
+// single- and multi-byte Intel NOP variants as well as INT3 (0xCC), which some
+// compilers use as inter-function filler instead of NOP.
+func consumePaddingAMD64(code []byte, start int) int {
+	j := start
+	for j < len(code) {
+		if code[j] == x86INT3 {
+			j++
+			continue
+		}
+		pad, err := x86asm.Decode(code[j:], 64)
+		if err != nil {
+			break
+		}
+		if !isNOPLike(pad) {
+			break
+		}
+		j += pad.Len
+	}
+	return j
+}
+
+// consumePaddingARM64 advances past NOP instructions (0xD503201F) starting at
+// code[start] and returns the index of the first non-NOP instruction, or start
+// if the first instruction is already non-NOP or undecodable.
+func consumePaddingARM64(code []byte, start int) int {
+	const insnLen = 4
+	j := start
+	for j+insnLen <= len(code) {
+		pad, err := arm64asm.Decode(code[j : j+insnLen])
+		if err != nil {
+			break
+		}
+		if pad.Op != arm64asm.NOP {
+			break
+		}
+		j += insnLen
+	}
+	return j
+}
+
+// isNOPLike reports whether inst is a NOP-class instruction used as padding:
+// - Any NOP (single or multi-byte Intel NOP family)
+// - XCHG AX, AX (0x66 0x90, a 2-byte NOP equivalent)
+// - CS/DATA16 prefix sequences that decode as NOP variants
+func isNOPLike(inst x86asm.Inst) bool {
+	if inst.Op == x86asm.NOP {
+		return true
+	}
+	// XCHG AX, AX (66 90) decodes as XCHG with AX,AX operands - a canonical
+	// 2-byte NOP. Accept any XCHG where both operands are the same register.
+	if inst.Op == x86asm.XCHG {
+		if inst.Args[0] == inst.Args[1] {
+			return true
+		}
+	}
+	return false
 }
