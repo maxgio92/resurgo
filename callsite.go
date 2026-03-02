@@ -144,13 +144,11 @@ func detectCallSitesAMD64(code []byte, baseAddr uint64) ([]CallSiteEdge, error) 
 	addr := baseAddr
 
 	for offset < len(code) {
-		// Skip ENDBR64 (f3 0f 1e fa) and ENDBR32 (f3 0f 1e fb) which
-		// golang.org/x/arch/x86/x86asm does not recognise. These CET
-		// instructions appear at function entries on binaries compiled
-		// with -fcf-protection and are transparent to call site detection.
-		if offset+4 <= len(code) &&
-			code[offset] == 0xf3 && code[offset+1] == 0x0f &&
-			code[offset+2] == 0x1e && (code[offset+3] == 0xfa || code[offset+3] == 0xfb) {
+		// Skip ENDBR64 / ENDBR32: golang.org/x/arch/x86/x86asm does not
+		// recognise these CET instructions. They appear at function entries
+		// on binaries compiled with -fcf-protection and are transparent to
+		// call site detection.
+		if isENDBR(code, offset) {
 			offset += 4
 			addr += 4
 			continue

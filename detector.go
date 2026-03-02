@@ -11,6 +11,30 @@ import (
 	"golang.org/x/arch/x86/x86asm"
 )
 
+const (
+	// endbr64Byte{0..3} are the four bytes of the ENDBR64 instruction
+	// (F3 0F 1E FA). ENDBR32 shares the first three bytes but ends with 0xFB.
+	// These CET indirect-branch-tracking prefixes appear at function entries
+	// on binaries compiled with -fcf-protection=branch.
+	endbr64Byte0 = byte(0xF3)
+	endbr64Byte1 = byte(0x0F)
+	endbr64Byte2 = byte(0x1E)
+	endbr64Byte3 = byte(0xFA)
+	endbr32Byte3 = byte(0xFB)
+)
+
+// isENDBR reports whether the 4 bytes at code[i:i+4] encode an ENDBR64
+// (F3 0F 1E FA) or ENDBR32 (F3 0F 1E FB) instruction.
+// golang.org/x/arch/x86/x86asm does not recognise these CET instructions,
+// so callers must skip them explicitly before invoking the decoder.
+func isENDBR(code []byte, i int) bool {
+	return i+4 <= len(code) &&
+		code[i] == endbr64Byte0 &&
+		code[i+1] == endbr64Byte1 &&
+		code[i+2] == endbr64Byte2 &&
+		(code[i+3] == endbr64Byte3 || code[i+3] == endbr32Byte3)
+}
+
 // DetectFunctions combines prologue detection, call site analysis, and
 // alignment-based boundary detection to identify function entry points.
 // Functions detected by multiple methods receive higher confidence ratings.
@@ -173,13 +197,11 @@ func detectProloguesAMD64(code []byte, baseAddr uint64) ([]Prologue, error) {
 	var prevInsn *x86asm.Inst
 
 	for offset < len(code) {
-		// Skip ENDBR64 (f3 0f 1e fa) and ENDBR32 (f3 0f 1e fb) which
-		// golang.org/x/arch/x86/x86asm does not recognise. These CET
-		// instructions appear at function entries on binaries compiled
-		// with -fcf-protection and are transparent to prologue detection.
-		if offset+4 <= len(code) &&
-			code[offset] == 0xf3 && code[offset+1] == 0x0f &&
-			code[offset+2] == 0x1e && (code[offset+3] == 0xfa || code[offset+3] == 0xfb) {
+		// Skip ENDBR64 / ENDBR32: golang.org/x/arch/x86/x86asm does not
+		// recognise these CET instructions. They appear at function entries
+		// on binaries compiled with -fcf-protection and are transparent to
+		// prologue detection.
+		if isENDBR(code, offset) {
 			offset += 4
 			addr += 4
 			continue // prevInsn intentionally unchanged

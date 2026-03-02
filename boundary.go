@@ -18,29 +18,7 @@ const (
 	// x86INT3 is the single-byte INT3 opcode (0xCC). Compilers emit it as
 	// inter-function padding on x86-64 when NOP fill is not used.
 	x86INT3 = byte(0xCC)
-
-	// endbr64Byte{0..3} are the four bytes of the ENDBR64 instruction
-	// (F3 0F 1E FA). ENDBR32 shares the first three bytes but ends with 0xFB.
-	// These CET indirect-branch-tracking prefixes appear at function entries
-	// on binaries compiled with -fcf-protection=branch.
-	endbr64Byte0 = byte(0xF3)
-	endbr64Byte1 = byte(0x0F)
-	endbr64Byte2 = byte(0x1E)
-	endbr64Byte3 = byte(0xFA)
-	endbr32Byte3 = byte(0xFB)
 )
-
-// isENDBR reports whether the 4 bytes at code[i:i+4] encode an ENDBR64
-// (F3 0F 1E FA) or ENDBR32 (F3 0F 1E FB) instruction.
-// golang.org/x/arch/x86/x86asm does not recognise these CET instructions,
-// so callers must skip them explicitly before invoking the decoder.
-func isENDBR(code []byte, i int) bool {
-	return i+4 <= len(code) &&
-		code[i] == endbr64Byte0 &&
-		code[i+1] == endbr64Byte1 &&
-		code[i+2] == endbr64Byte2 &&
-		(code[i+3] == endbr64Byte3 || code[i+3] == endbr32Byte3)
-}
 
 // consumePaddingAMD64 advances past NOP-like and INT3 fill bytes starting at
 // code[start] and returns the index of the first non-padding byte. It handles
