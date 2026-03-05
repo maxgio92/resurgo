@@ -166,14 +166,34 @@ func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error) {
 		return nil, fmt.Errorf("failed to read .text section: %w", err)
 	}
 
+	var arch Arch
 	switch f.Machine {
 	case elf.EM_X86_64:
-		return DetectFunctions(code, textSec.Addr, ArchAMD64)
+		arch = ArchAMD64
 	case elf.EM_AARCH64:
-		return DetectFunctions(code, textSec.Addr, ArchARM64)
+		arch = ArchARM64
 	default:
 		return nil, fmt.Errorf("unsupported ELF machine: %s", f.Machine)
 	}
+
+	candidates, err := DetectFunctions(code, textSec.Addr, arch)
+	if err != nil {
+		return nil, err
+	}
+
+	// Remove candidates that land inside linker-generated PLT sections.
+	// The call-site scanner records CALL/JMP targets regardless of which
+	// section they resolve to; PLT stubs are not real function entries.
+	pltNames := []string{".plt", ".plt.got", ".plt.sec", ".iplt"}
+	var pltRanges [][2]uint64
+	for _, name := range pltNames {
+		if sec := f.Section(name); sec != nil {
+			pltRanges = append(pltRanges, [2]uint64{sec.Addr, sec.Addr + sec.Size})
+		}
+	}
+	candidates = filterCandidatesInRanges(candidates, pltRanges)
+
+	return candidates, nil
 }
 
 // DetectPrologues analyzes raw machine code bytes and returns detected function

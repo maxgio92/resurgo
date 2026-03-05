@@ -2,6 +2,32 @@ package resurgo
 
 import "slices"
 
+// filterCandidatesInRanges removes candidates whose addresses fall within any
+// of the given address ranges. Each range is a [lo, hi) pair.
+//
+// Used to discard candidates that land inside linker-generated sections (e.g.
+// PLT stubs) that the call-site scanner can detect as CALL/JMP targets even
+// though they are not real function entries in the binary under analysis.
+func filterCandidatesInRanges(candidates []FunctionCandidate, ranges [][2]uint64) []FunctionCandidate {
+	if len(ranges) == 0 {
+		return candidates
+	}
+	result := candidates[:0]
+	for _, c := range candidates {
+		inRange := false
+		for _, r := range ranges {
+			if c.Address >= r[0] && c.Address < r[1] {
+				inRange = true
+				break
+			}
+		}
+		if !inRange {
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
 // filterJumpTargetsByAnchorRange removes DetectionJumpTarget candidates that
 // are intra-function branch targets from the candidates map.
 //
