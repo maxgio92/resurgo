@@ -3,16 +3,22 @@ package resurgo
 import "slices"
 
 // filterJumpTargetsByAnchorRange removes DetectionJumpTarget candidates that
-// fall strictly between two consecutive anchor function starts from the
-// candidates map.
+// are intra-function branch targets from the candidates map.
 //
 // An anchor is a candidate confirmed by a CALL instruction
 // (DetectionCallTarget) or a prologue pattern (DetectionPrologueOnly,
 // DetectionBoth) - signals strong enough to treat as a reliable function
-// start. Any JumpTarget candidate that falls strictly between two consecutive
-// anchors is almost certainly the target of an intra-function unconditional
-// branch (switch dispatch, basic block jump) rather than a separate function
-// entry, and is removed.
+// start. Consecutive anchor addresses define function body intervals.
+//
+// A JumpTarget candidate is removed only when it falls strictly between two
+// consecutive anchors AND every source address in JumpedFrom also falls
+// within that same interval. Both conditions must hold: the target is inside
+// a known function body, and every jump that reaches it originates from
+// within the same body (switch dispatch, basic block jump).
+//
+// If JumpedFrom is empty the source is unknown, so the candidate is kept.
+// If any source falls outside the interval the jump is inter-function (e.g.
+// a tail call from another function), so the candidate is kept.
 //
 // Aligned-entry candidates are intentionally excluded: small leaf functions
 // with no call-site or prologue signal have no enclosing anchor and would
@@ -36,9 +42,23 @@ func filterJumpTargetsByAnchorRange(candidates map[uint64]*FunctionCandidate) {
 		if found {
 			continue // addr is itself an anchor
 		}
-		if idx > 0 && idx < len(anchors) {
-			// addr falls strictly between anchors[idx-1] and anchors[idx]:
-			// intra-function jump target, not a function entry.
+		if idx == 0 || idx >= len(anchors) {
+			continue // outside all anchor intervals
+		}
+		// addr falls strictly between anchors[idx-1] and anchors[idx].
+		// Only remove if every source is within the same interval: that
+		// means the jump originates from within the same function body
+		// (intra-function branch). Any source outside the interval means
+		// a different function is jumping here (inter-function tail call).
+		lower, upper := anchors[idx-1], anchors[idx]
+		allIntra := len(c.JumpedFrom) > 0
+		for _, src := range c.JumpedFrom {
+			if src < lower || src >= upper {
+				allIntra = false
+				break
+			}
+		}
+		if allIntra {
 			delete(candidates, addr)
 		}
 	}
