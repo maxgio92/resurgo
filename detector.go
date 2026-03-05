@@ -130,6 +130,44 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 		}
 	}
 
+	// Post-filter: remove jump-target candidates that fall inside a confirmed
+	// function's body. Build a sorted slice of "anchor" addresses - candidates
+	// confirmed by prologue detection or direct CALL instructions. These are
+	// reliable function starts and serve as body delimiters.
+	//
+	// A jump-target candidate that falls strictly between two consecutive
+	// anchors is likely the target of an intra-function JMP (e.g. a computed
+	// jump or a tail-branch inside a large CRT function) rather than a
+	// separate function entry.
+	//
+	// Aligned-entry candidates are intentionally excluded from this filter:
+	// they may be real functions with no call-site or prologue signal (e.g.
+	// small leaf functions inlined everywhere except in the binary itself).
+	anchors := make([]uint64, 0, len(candidates))
+	for addr, c := range candidates {
+		if c.DetectionType == DetectionCallTarget ||
+			c.DetectionType == DetectionPrologueOnly ||
+			c.DetectionType == DetectionBoth {
+			anchors = append(anchors, addr)
+		}
+	}
+	slices.Sort(anchors)
+
+	for addr, c := range candidates {
+		if c.DetectionType != DetectionJumpTarget {
+			continue
+		}
+		idx, found := slices.BinarySearch(anchors, addr)
+		if found {
+			continue // addr is itself an anchor
+		}
+		if idx > 0 && idx < len(anchors) {
+			// addr falls strictly between anchors[idx-1] and anchors[idx]:
+			// intra-function jump target, not a function entry.
+			delete(candidates, addr)
+		}
+	}
+
 	// Convert map to sorted slice
 	result := make([]FunctionCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
