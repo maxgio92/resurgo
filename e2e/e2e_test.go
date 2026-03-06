@@ -437,36 +437,37 @@ func TestDetectFunctionsFromELF_RealWorld_Grep(t *testing.T) {
 		t.Fatalf("DetectFunctionsFromELF: %v", err)
 	}
 
-	tp, fp := 0, 0
+	var stats detectionStats
+	stats.total = total
 	for _, c := range candidates {
 		if _, ok := allFuncs[c.Address]; ok {
-			tp++
+			stats.truePositives++
 		} else {
-			fp++
+			stats.falsePositives++
 		}
 	}
-
-	tpRate := float64(tp) * 100 / float64(total)
-	fpMul := float64(fp) / float64(total)
-
-	t.Logf("total_funcs:     %d", total)
-	t.Logf("detected:        %d", len(candidates))
-	t.Logf("true_positives:  %d (%.1f%%)", tp, tpRate)
-	t.Logf("false_positives: %d (%.2fx)", fp, fpMul)
+	// Function names are not available from a stripped binary; log in the
+	// same format as logSummary but without the name list.
+	missed := stats.total - stats.truePositives
+	t.Logf("true_positives:   %d/%d (%.0f%%)", stats.truePositives, stats.total, stats.tpRate())
+	t.Logf("missed:           %d/%d (%.0f%%)", missed, stats.total, stats.missedRate())
+	t.Logf("false_positives:  %d (%.2fx per real function)", stats.falsePositives, stats.fpMultiplier())
 
 	// At least 70% recall. Baseline (grep 3.11-4, gcc 14.2.0): 75.1%.
-	if tpRate < 70.0 {
-		t.Errorf("true positive rate %.1f%% < 70.0%%: regression?", tpRate)
+	if stats.tpRate() < 70.0 {
+		t.Errorf("true positive rate %.1f%% < 70.0%%: regression?", stats.tpRate())
 	}
 
 	// FP multiplier must stay below 4.0x. Baseline: 2.82x.
 	// Denser code means more intra-function false positives than in the
 	// synthetic fixture; a higher FP rate is expected and documented.
-	if fpMul >= 4.0 {
-		t.Errorf("false positive multiplier %.2fx >= 4.00x: too noisy", fpMul)
+	if stats.fpMultiplier() >= 4.0 {
+		t.Errorf("false positive multiplier %.2fx >= 4.00x: too noisy",
+			stats.fpMultiplier())
 	}
 
-	t.Logf("snapshot: tp_rate=%.1f%% fp_multiplier=%.2fx", tpRate, fpMul)
+	t.Logf("snapshot: tp_rate=%.0f%% fp_multiplier=%.2fx",
+		stats.tpRate(), stats.fpMultiplier())
 }
 
 // TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64 validates detection
