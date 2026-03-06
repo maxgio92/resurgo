@@ -236,9 +236,10 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized(t *testing.T) {
 			stats.tpRate(), stats.truePositives, stats.total, stats.missed)
 	}
 
-	// FP multiplier should stay below 2x - only CRT noise expected.
-	if stats.fpMultiplier() >= 2.0 {
-		t.Errorf("false positive multiplier %.2fx >= 2.00x: detector is too noisy",
+	// FP multiplier should stay below 1x - PLT stubs are filtered,
+	// only residual CRT noise expected.
+	if stats.fpMultiplier() >= 1.0 {
+		t.Errorf("false positive multiplier %.2fx >= 1.00x: detector is too noisy",
 			stats.fpMultiplier())
 	}
 
@@ -283,27 +284,27 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 		t.Errorf("fib(0x%x): confidence=%s, want high", va, c.Confidence)
 	}
 
-	// Document the limitation explicitly: true positive rate must be below
-	// 100% and false positive multiplier must be above 1x. If either
-	// assertion flips, resurgo has improved (update the test) or regressed.
+	// Document the known limitation: TP rate may be below 100% due to
+	// inlining. If it flips to 100%, issue #13 may be resolved.
 	if stats.tpRate() == 100 {
 		t.Logf("NOTICE: true positive rate is now 100%% - issue #13 may be resolved; " +
 			"consider promoting this test to a full recall assertion")
 	}
-	if stats.fpMultiplier() <= 1.0 {
-		t.Logf("NOTICE: false positive multiplier dropped to %.2fx - noise reduced",
-			stats.fpMultiplier())
-	}
 
-	// Snapshot bounds: TP rate expected around 40% (2/5), FP multiplier
-	// expected above 1x. These are soft checks that print context without
-	// failing the build - they exist so any significant shift is visible in
-	// CI output.
-	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
-		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
+	// At least one function must be found.
 	if stats.truePositives == 0 {
 		t.Errorf("true positives: 0/%d - detector found nothing; regression?", stats.total)
 	}
+
+	// FP multiplier must stay below 1.5x. PLT stubs are now filtered;
+	// only CRT noise remains (~1.0x baseline with gcc 14.2.0).
+	if stats.fpMultiplier() >= 1.5 {
+		t.Errorf("false positive multiplier %.2fx >= 1.50x: detector is too noisy",
+			stats.fpMultiplier())
+	}
+
+	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
+		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
 }
 
 // TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64 validates boundary
@@ -345,6 +346,14 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64(t *testing.T) {
 	if stats.truePositives < 4 {
 		t.Errorf("true positives: %d/%d - regression? expected at least 4; missed: %v",
 			stats.truePositives, stats.total, stats.missed)
+	}
+
+	// FP multiplier must stay below 3x. PLT stubs are filtered; residual
+	// FPs are CRT functions and intra-CRT jump targets (~2.4x baseline
+	// with gcc 14.2.0 aarch64-linux-gnu).
+	if stats.fpMultiplier() >= 3.0 {
+		t.Errorf("false positive multiplier %.2fx >= 3.00x: detector is too noisy",
+			stats.fpMultiplier())
 	}
 
 	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
