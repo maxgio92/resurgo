@@ -128,6 +128,33 @@ func groundTruthVAs(t *testing.T, binPath string, wantNames []string) map[string
 	return result
 }
 
+// allFunctionVAs reads the ELF symbol table from binPath and returns the
+// virtual address of every STT_FUNC symbol, regardless of name. Used to
+// distinguish genuine false positives (addresses the detector reports that are
+// not real function entries) from CRT boilerplate that the detector correctly
+// finds but that are outside the user-defined recall target.
+func allFunctionVAs(t *testing.T, binPath string) map[uint64]struct{} {
+	t.Helper()
+	f, err := elf.Open(binPath)
+	if err != nil {
+		t.Fatalf("elf.Open(%s): %v", binPath, err)
+	}
+	defer f.Close()
+
+	syms, err := f.Symbols()
+	if err != nil {
+		t.Fatalf("f.Symbols: %v", err)
+	}
+
+	result := make(map[uint64]struct{})
+	for _, sym := range syms {
+		if elf.ST_TYPE(sym.Info) == elf.STT_FUNC {
+			result[sym.Value] = struct{}{}
+		}
+	}
+	return result
+}
+
 // measure compiles src, strips it, runs DetectFunctionsFromELF, and returns
 // per-function detection details alongside aggregated detectionStats.
 // stripTool is the strip binary to use (e.g. "strip" for the host arch,
@@ -176,12 +203,15 @@ func measure(
 		byVA[c.Address] = c
 	}
 
-	// Build stats.
-	truthVAs := make(map[uint64]struct{}, len(truth))
-	for _, va := range truth {
-		truthVAs[va] = struct{}{}
-	}
+	// allFuncs covers every STT_FUNC symbol in the unstripped binary,
+	// including CRT boilerplate. A candidate is a true false positive only
+	// if its address does not correspond to any real function entry —
+	// finding _start or frame_dummy is correct behaviour, not noise.
+	allFuncs := allFunctionVAs(t, unstripped)
 
+	// Build stats.
+	// TP/recall: measured against userFuncs only (the caller's target set).
+	// FP: measured against allFuncs so that CRT detections are not penalised.
 	stats.total = len(userFuncs)
 	for _, name := range userFuncs {
 		if _, ok := byVA[truth[name]]; ok {
@@ -191,7 +221,7 @@ func measure(
 		}
 	}
 	for va := range byVA {
-		if _, ok := truthVAs[va]; !ok {
+		if _, ok := allFuncs[va]; !ok {
 			stats.falsePositives++
 		}
 	}
@@ -236,10 +266,11 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized(t *testing.T) {
 			stats.tpRate(), stats.truePositives, stats.total, stats.missed)
 	}
 
-	// FP multiplier should stay below 1x - PLT stubs are filtered,
-	// only residual CRT noise expected.
-	if stats.fpMultiplier() >= 1.0 {
-		t.Errorf("false positive multiplier %.2fx >= 1.00x: detector is too noisy",
+	// FP multiplier should stay below 0.5x. PLT stubs are filtered and
+	// CRT functions are excluded from the FP count (they are real
+	// detections); only genuinely spurious addresses remain.
+	if stats.fpMultiplier() >= 0.5 {
+		t.Errorf("false positive multiplier %.2fx >= 0.50x: detector is too noisy",
 			stats.fpMultiplier())
 	}
 
@@ -296,10 +327,11 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 		t.Errorf("true positives: 0/%d - detector found nothing; regression?", stats.total)
 	}
 
-	// FP multiplier must stay below 1.5x. PLT stubs are now filtered;
-	// only CRT noise remains (~1.0x baseline with gcc 14.2.0).
-	if stats.fpMultiplier() >= 1.5 {
-		t.Errorf("false positive multiplier %.2fx >= 1.50x: detector is too noisy",
+	// FP multiplier must stay below 0.5x. PLT stubs are filtered and
+	// CRT functions are not counted as FPs; only genuinely spurious
+	// addresses remain (~0.2x baseline with gcc 14.2.0).
+	if stats.fpMultiplier() >= 0.5 {
+		t.Errorf("false positive multiplier %.2fx >= 0.50x: detector is too noisy",
 			stats.fpMultiplier())
 	}
 
@@ -348,11 +380,12 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64(t *testing.T) {
 			stats.truePositives, stats.total, stats.missed)
 	}
 
-	// FP multiplier must stay below 3x. PLT stubs are filtered; residual
-	// FPs are CRT functions and intra-CRT jump targets (~2.4x baseline
-	// with gcc 14.2.0 aarch64-linux-gnu).
-	if stats.fpMultiplier() >= 3.0 {
-		t.Errorf("false positive multiplier %.2fx >= 3.00x: detector is too noisy",
+	// FP multiplier must stay below 2x. PLT stubs and CRT boilerplate
+	// are excluded; residual FPs are intra-CRT jump targets inside
+	// .text that the anchor-range filter does not suppress (~1.6x
+	// baseline with gcc 14.2.0 aarch64-linux-gnu).
+	if stats.fpMultiplier() >= 2.0 {
+		t.Errorf("false positive multiplier %.2fx >= 2.00x: detector is too noisy",
 			stats.fpMultiplier())
 	}
 
