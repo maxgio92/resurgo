@@ -106,13 +106,27 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 		}
 	}
 
+	// Build a set of backward-branch targets (loop heads). A loop head is an
+	// address targeted by a backward unconditional branch (JMP on AMD64, B on
+	// ARM64) where target < source - these are loop back-edges. GCC aligns
+	// loop heads to 16-byte boundaries with NOP fill at -O2, producing the
+	// same ret+NOP+aligned pattern as a function separator. Excluding them
+	// before emitting aligned-entry candidates removes the main FP source.
+	loopHeads := make(map[uint64]struct{})
+	for _, edge := range edges {
+		if edge.Type == CallSiteJump && edge.TargetAddr < edge.SourceAddr {
+			loopHeads[edge.TargetAddr] = struct{}{}
+		}
+	}
+
 	// Add alignment-based candidates for functions that have no prologue and
 	// no call-site signal (e.g. pure-leaf functions with external linkage
 	// that were never called due to inlining or compile-time evaluation).
 	//
 	// These receive ConfidenceLow because the pattern (ret + NOP padding →
 	// 16-byte aligned address) is reliable for function separators but can
-	// also match intra-function alignment at loop heads.
+	// also match intra-function alignment at loop heads. Loop heads are
+	// excluded above via the backward-branch filter.
 	var alignedEntries []uint64
 	switch arch {
 	case ArchAMD64:
@@ -121,6 +135,9 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 		alignedEntries = detectAlignedEntriesARM64(code, baseAddr)
 	}
 	for _, addr := range alignedEntries {
+		if _, isLoopHead := loopHeads[addr]; isLoopHead {
+			continue // backward-branch target: loop head, not a function entry
+		}
 		if _, exists := candidates[addr]; !exists {
 			candidates[addr] = &FunctionCandidate{
 				Address:       addr,
