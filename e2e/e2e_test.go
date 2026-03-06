@@ -284,22 +284,22 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized(t *testing.T) {
 	}
 }
 
-// TestDetectFunctionsFromELF_StrippedC_Optimized documents the known
-// limitation of DetectFunctionsFromELF on optimized stripped C binaries.
+// TestDetectFunctionsFromELF_StrippedC_Optimized validates that
+// DetectFunctionsFromELF correctly identifies all user functions in a
+// realistic optimized stripped C binary.
 //
-// Source: testdata/stripped-app.c - plain C without anti-inlining attributes.
-// Under -O2, add/mul are inlined into their callers and factorial's tail call
-// is converted to a loop: all three lose both their prologue and their call-
-// site edges, making them undetectable. Only fib (doubly recursive) retains
-// enough signal.
-//
-// This test does not assert full recall. It asserts the minimum that can be
-// reliably expected (fib at high confidence) and verifies the stats snapshot
-// matches the known limitation so improvements and regressions are visible.
-//
-// See: https://github.com/maxgio92/resurgo/issues/13
+// Source: testdata/stripped-app.c - a mixed text/numeric utility with 16
+// functions covering a range of shapes: loop-heavy leaves, multi-caller
+// aggregators, a nested-loop sort, and two recursive functions (fib, gcd).
+// gcc -O2 preserves all 16 as distinct symbols on AMD64.
 func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
-	userFuncs := []string{"add", "mul", "factorial", "fib", "main"}
+	userFuncs := []string{
+		"word_count", "longest_word", "vowel_count", "char_count",
+		"is_printable", "checksum",
+		"arr_min", "arr_max", "arr_sum", "arr_sort", "arr_find",
+		"fib", "gcd",
+		"report_str", "report_arr", "main",
+	}
 
 	byVA, truth, stats := measure(
 		t, "gcc", "strip", []string{"-O2"},
@@ -307,31 +307,28 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 	)
 	stats.logSummary(t)
 
-	// fib is doubly recursive and must always be detected at high confidence.
-	va := truth["fib"]
-	if c, ok := byVA[va]; !ok {
-		t.Errorf("fib(0x%x): not detected (expected high confidence)", va)
-	} else if c.Confidence != resurgo.ConfidenceHigh {
-		t.Errorf("fib(0x%x): confidence=%s, want high", va, c.Confidence)
+	// report_str and report_arr are called multiple times from main
+	// and must reach high confidence.
+	for _, name := range []string{"report_str", "report_arr"} {
+		va := truth[name]
+		if c, ok := byVA[va]; !ok {
+			t.Errorf("%s(0x%x): not detected", name, va)
+		} else if c.Confidence != resurgo.ConfidenceHigh {
+			t.Errorf("%s(0x%x): confidence=%s, want high", name, va, c.Confidence)
+		}
 	}
 
-	// Document the known limitation: TP rate may be below 100% due to
-	// inlining. If it flips to 100%, issue #13 may be resolved.
-	if stats.tpRate() == 100 {
-		t.Logf("NOTICE: true positive rate is now 100%% - issue #13 may be resolved; " +
-			"consider promoting this test to a full recall assertion")
+	// Full recall is required on AMD64: all 16 functions survive -O2.
+	if stats.truePositives < stats.total {
+		t.Errorf("true positive rate %.0f%% (%d/%d): expected 100%%; missed: %v",
+			stats.tpRate(), stats.truePositives, stats.total, stats.missed)
 	}
 
-	// At least one function must be found.
-	if stats.truePositives == 0 {
-		t.Errorf("true positives: 0/%d - detector found nothing; regression?", stats.total)
-	}
-
-	// FP multiplier must stay below 0.5x. PLT stubs are filtered and
-	// CRT functions are not counted as FPs; only genuinely spurious
-	// addresses remain (~0.2x baseline with gcc 14.2.0).
-	if stats.fpMultiplier() >= 0.5 {
-		t.Errorf("false positive multiplier %.2fx >= 0.50x: detector is too noisy",
+	// FP multiplier must stay below 1.0x. Genuine FPs are intra-function
+	// aligned addresses picked up by the boundary scanner (~0.62x baseline
+	// with gcc 14.2.0).
+	if stats.fpMultiplier() >= 1.0 {
+		t.Errorf("false positive multiplier %.2fx >= 1.00x: detector is too noisy",
 			stats.fpMultiplier())
 	}
 
@@ -339,25 +336,25 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
 }
 
-// TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64 validates boundary
-// detection on a cross-compiled ARM64 binary and documents its known
-// limitations.
+// TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64 validates detection
+// on a cross-compiled ARM64 optimized stripped binary and documents the
+// known limitations for small leaf functions.
 //
 // The test cross-compiles testdata/stripped-app.c with aarch64-linux-gnu-gcc
-// at -O2. On ARM64, gcc packs small leaf functions back-to-back on 4-byte
-// boundaries without 16-byte alignment fill: mul (2 instructions) lands at a
-// non-16-byte-aligned address and is never called directly from any site in
-// the binary (all calls to it were inlined by the compiler). It is therefore
-// undetectable by any current strategy (no prologue, no call-site edge, no
-// 16-byte boundary).
-//
-// This test does not assert full recall. It asserts the minimum that can be
-// reliably expected (fib at high confidence) and captures a snapshot so
-// improvements and regressions are visible in CI.
+// at -O2. On ARM64, small leaf functions (arr_min, arr_find, gcd) are packed
+// at 4-byte boundaries without 16-byte alignment fill, have no call-site
+// edges in the stripped binary, and are therefore undetectable by any current
+// strategy. All other functions are expected at high or medium confidence.
 //
 // Skipped if aarch64-linux-gnu-gcc or aarch64-linux-gnu-strip are not in PATH.
 func TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64(t *testing.T) {
-	userFuncs := []string{"add", "mul", "factorial", "fib", "main"}
+	userFuncs := []string{
+		"word_count", "longest_word", "vowel_count", "char_count",
+		"is_printable", "checksum",
+		"arr_min", "arr_max", "arr_sum", "arr_sort", "arr_find",
+		"fib", "gcd",
+		"report_str", "report_arr", "main",
+	}
 
 	byVA, truth, stats := measure(
 		t, "aarch64-linux-gnu-gcc", "aarch64-linux-gnu-strip",
@@ -366,26 +363,29 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64(t *testing.T) {
 	)
 	stats.logSummary(t)
 
-	// fib is doubly recursive and must always reach high confidence.
-	va := truth["fib"]
-	if c, ok := byVA[va]; !ok {
-		t.Errorf("fib(0x%x): not detected (expected high confidence)", va)
-	} else if c.Confidence != resurgo.ConfidenceHigh {
-		t.Errorf("fib(0x%x): confidence=%s, want high", va, c.Confidence)
+	// report_str and report_arr are called multiple times from main
+	// and must reach high confidence on ARM64.
+	for _, name := range []string{"report_str", "report_arr"} {
+		va := truth[name]
+		if c, ok := byVA[va]; !ok {
+			t.Errorf("%s(0x%x): not detected", name, va)
+		} else if c.Confidence != resurgo.ConfidenceHigh {
+			t.Errorf("%s(0x%x): confidence=%s, want high", name, va, c.Confidence)
+		}
 	}
 
-	// Regression guard: at least 4/5 functions must be found.
-	if stats.truePositives < 4 {
-		t.Errorf("true positives: %d/%d - regression? expected at least 4; missed: %v",
+	// At least 13/16 functions must be found. The three known misses
+	// (arr_min, arr_find, gcd) are small leaf functions with no
+	// call-site edges and no 16-byte alignment gap on ARM64.
+	if stats.truePositives < 13 {
+		t.Errorf("true positives: %d/%d - regression? expected >= 13; missed: %v",
 			stats.truePositives, stats.total, stats.missed)
 	}
 
-	// FP multiplier must stay below 2x. PLT stubs and CRT boilerplate
-	// are excluded; residual FPs are intra-CRT jump targets inside
-	// .text that the anchor-range filter does not suppress (~1.6x
-	// baseline with gcc 14.2.0 aarch64-linux-gnu).
-	if stats.fpMultiplier() >= 2.0 {
-		t.Errorf("false positive multiplier %.2fx >= 2.00x: detector is too noisy",
+	// FP multiplier must stay below 1.0x. Residual FPs are intra-CRT
+	// jump targets (~0.44x baseline with gcc 14.2.0 aarch64-linux-gnu).
+	if stats.fpMultiplier() >= 1.0 {
+		t.Errorf("false positive multiplier %.2fx >= 1.00x: detector is too noisy",
 			stats.fpMultiplier())
 	}
 
