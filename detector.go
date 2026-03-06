@@ -193,6 +193,14 @@ func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error) {
 	}
 	candidates = filterCandidatesInRanges(candidates, pltRanges)
 
+	// On AMD64 CET-enabled binaries every indirect-branch-target function
+	// entry starts with ENDBR64. Aligned-entry candidates that lack ENDBR64
+	// are intra-function alignment points and are false positives. The filter
+	// is a no-op on non-CET binaries (no ENDBR64 among aligned entries).
+	if arch == ArchAMD64 {
+		candidates = filterAlignedEntriesCETAMD64(candidates, code, textSec.Addr)
+	}
+
 	return candidates, nil
 }
 
