@@ -13,6 +13,7 @@ It works with raw bytes from any binary format as well as parsing ELF files.
 - **Prologue-Based Detection**: Recognizes common function entry patterns by instruction analysis
 - **Call-Site Analysis**: Identifies functions through CALL and JMP target extraction
 - **Boundary Analysis**: Recovers leaf and never-called functions via compiler alignment gaps
+- **False Positive Filtering**: Discards intra-function jump targets (anchor-range filter) and linker-generated PLT stubs (section-range filter) from the candidate list
 - **Format-Agnostic Core**: Works on raw machine code bytes from any binary format
 - **ELF Convenience Wrapper**: Built-in support for parsing ELF executables
 - **Pattern Classification**: Labels detected functions by detection type and confidence
@@ -248,7 +249,8 @@ func DetectCallSitesFromELF(r io.ReaderAt) ([]CallSiteEdge, error)
 // Functions detected by both methods receive the highest confidence rating.
 func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandidate, error)
 
-// Convenience wrapper  - parses ELF from the reader, extracts .text, calls DetectFunctions.
+// Convenience wrapper  - parses ELF from the reader, extracts .text, calls DetectFunctions,
+// then applies FP filters (PLT section ranges, intra-function jump targets).
 func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error)
 ```
 
@@ -387,6 +389,11 @@ type FunctionCandidate struct {
             └───────┬───────┘
                     ▼
             ┌───────────────┐
+            │  FP Filters   │ ← Anchor-range (intra-func JMPs)
+            │               │   PLT section ranges
+            └───────┬───────┘
+                    ▼
+            ┌───────────────┐
             │[]FunctionCand │
             │    idate      │
             └───────────────┘
@@ -395,12 +402,12 @@ type FunctionCandidate struct {
 ## Limitations
 
 - **No Symbol Information**: Works on stripped binaries but reports addresses only
-- **Heuristic-Based**: May have false positives in data sections or inline data
+- **Heuristic-Based**: PLT stubs and intra-function jump targets are filtered, but intra-function branches inside CRT code may still produce false positives when they land on aligned addresses with no surrounding anchor functions
 - **Linear Disassembly**: Doesn't handle indirect jumps or computed addresses
 
 ## Dependencies
 
-- **Go 1.21+**
+- **Go 1.25.7+**
 - [`golang.org/x/arch`](https://pkg.go.dev/golang.org/x/arch) - x86 and ARM64 disassembler
 - `debug/elf` (standard library) - ELF parser
 
