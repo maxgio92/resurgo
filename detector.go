@@ -29,6 +29,11 @@ const (
 	endbr32Byte3 = byte(0xFB)
 )
 
+// endbr64Bytes is the 4-byte encoding of the ENDBR64 instruction as a
+// fixed-size array for direct comparison. Built from the individual byte
+// constants so the encoding is defined in one place.
+var endbr64Bytes = [4]byte{endbr64Byte0, endbr64Byte1, endbr64Byte2, endbr64Byte3}
+
 // Confidence represents the reliability level of a detected function candidate.
 type Confidence string
 

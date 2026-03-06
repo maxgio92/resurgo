@@ -14,6 +14,7 @@ type CandidateFilter func([]FunctionCandidate, *elf.File) ([]FunctionCandidate, 
 // registers its filter here; order matters.
 var elfFilters = []CandidateFilter{
 	pltFilter,
+	cetFilter,
 	ehFrameFilter,
 }
 
@@ -26,6 +27,76 @@ func pltFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error)
 		}
 	}
 	return filterCandidatesInRanges(cs, pltRanges), nil
+}
+
+// cetFilter applies the CET-aware ENDBR64 filter on AMD64 ELF binaries.
+// Non-AMD64 binaries are returned unchanged. The filter must run before
+// ehFrameFilter so that any aligned-entry candidate it drops can be recovered
+// as DetectionCFI when its address appears in an FDE record (e.g. _start has
+// no ENDBR64 but does have an FDE entry).
+func cetFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
+	if f.Machine != elf.EM_X86_64 {
+		return cs, nil
+	}
+	textSec := f.Section(".text")
+	if textSec == nil {
+		return cs, nil
+	}
+	textBytes, err := textSec.Data()
+	if err != nil {
+		return nil, err
+	}
+	return filterAlignedEntriesCETAMD64(cs, textBytes, textSec.Addr), nil
+}
+
+// filterAlignedEntriesCETAMD64 drops aligned-entry candidates lacking ENDBR64
+// on CET-enabled AMD64 binaries. On CET binaries every indirect-branch-target
+// function entry carries ENDBR64; an aligned address inside a function body
+// (reached by a jump or NOP padding) never does, making it a reliable
+// discriminator for aligned-entry false positives.
+//
+// CET is detected when >= 5 aligned-entry candidates carry ENDBR64; this
+// avoids false triggering on non-CET binaries that may have a few incidental
+// ENDBR64 hits from CRT helpers. Non-CET binaries are returned unchanged.
+// Only DetectionAlignedEntry candidates are affected.
+func filterAlignedEntriesCETAMD64(candidates []FunctionCandidate, textBytes []byte, textVA uint64) []FunctionCandidate {
+	hasENDBR64 := func(va uint64) bool {
+		if va < textVA {
+			return false
+		}
+		off := va - textVA
+		if off+4 > uint64(len(textBytes)) {
+			return false
+		}
+		return [4]byte(textBytes[off:off+4]) == endbr64Bytes
+	}
+
+	// Threshold of 5: non-CET binaries can have up to ~4 incidental ENDBR64
+	// hits from CRT helpers; 5 or more reliably indicates a CET binary.
+	const cetMinHits = 5
+	cetHits := 0
+	for i := range candidates {
+		if candidates[i].DetectionType == DetectionAlignedEntry && hasENDBR64(candidates[i].Address) {
+			cetHits++
+			if cetHits >= cetMinHits {
+				break
+			}
+		}
+	}
+	if cetHits < cetMinHits {
+		return candidates
+	}
+
+	// CET binary: keep only aligned-entry candidates that have ENDBR64.
+	// All other detection types are kept unconditionally.
+	result := candidates[:0]
+	for _, c := range candidates {
+		if c.DetectionType == DetectionAlignedEntry && !hasENDBR64(c.Address) {
+			continue
+		}
+		result = append(result, c)
+	}
+	return result
 }
 
 // filterCandidatesInRanges removes candidates whose addresses fall within any
