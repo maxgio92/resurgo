@@ -49,13 +49,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
-        with:
-          go-version-file: go.mod
-      - name: Install C toolchain
+      - name: Build e2e image
+        run: docker build -t resurgo-e2e -f e2e/Dockerfile .
+      - name: Run e2e tests
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc binutils
-      - name: Install ARM64 cross-compiler
-        run: sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
-      - run: go test -v -tags e2e ./e2e/...
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            resurgo-e2e \
+            go test -v -tags e2e ./e2e/...
