@@ -4,6 +4,8 @@ package e2e_test
 
 import (
 	"debug/elf"
+	"encoding/binary"
+	"fmt"
 	"math"
 	"os"
 	"os/exec"
@@ -155,6 +157,60 @@ func allFunctionVAs(t *testing.T, binPath string) map[uint64]struct{} {
 	return result
 }
 
+// findDebugFile locates the external debug file for binPath using the
+// GNU build-id convention: /usr/lib/debug/.build-id/XX/XXX...XX.debug.
+// Returns an error if .note.gnu.build-id is absent or the debug file is not
+// installed (e.g. the matching -dbgsym package is not present).
+func findDebugFile(t *testing.T, binPath string) (string, error) {
+	t.Helper()
+	f, err := elf.Open(binPath)
+	if err != nil {
+		return "", fmt.Errorf("elf.Open: %w", err)
+	}
+	defer f.Close()
+
+	sect := f.Section(".note.gnu.build-id")
+	if sect == nil {
+		return "", fmt.Errorf(".note.gnu.build-id not found in %s", binPath)
+	}
+	data, err := sect.Data()
+	if err != nil {
+		return "", fmt.Errorf("read .note.gnu.build-id: %w", err)
+	}
+
+	// ELF note layout (LE): namesz uint32, descsz uint32, ntype uint32,
+	// name[namesz] padded to 4 bytes, desc[descsz] = build ID bytes.
+	if len(data) < 12 {
+		return "", fmt.Errorf("build-id note too short (%d bytes)", len(data))
+	}
+	namesz := int(binary.LittleEndian.Uint32(data[0:4]))
+	descsz := int(binary.LittleEndian.Uint32(data[4:8]))
+	offset := 12 + (namesz+3)&^3 // skip name, padded to 4-byte boundary
+	if offset+descsz > len(data) {
+		return "", fmt.Errorf("build-id note malformed: offset=%d descsz=%d len=%d",
+			offset, descsz, len(data))
+	}
+	buildID := data[offset : offset+descsz]
+	hex := fmt.Sprintf("%x", buildID)
+	dbgPath := fmt.Sprintf("/usr/lib/debug/.build-id/%s/%s.debug", hex[:2], hex[2:])
+	if _, err := os.Stat(dbgPath); err != nil {
+		return "", fmt.Errorf("debug file not installed: %s", dbgPath)
+	}
+	return dbgPath, nil
+}
+
+// isStripped returns true when binPath has no symbol table (.symtab).
+func isStripped(t *testing.T, binPath string) bool {
+	t.Helper()
+	f, err := elf.Open(binPath)
+	if err != nil {
+		t.Fatalf("elf.Open(%s): %v", binPath, err)
+	}
+	defer f.Close()
+	_, err = f.Symbols()
+	return err != nil
+}
+
 // measure compiles src, strips it, runs DetectFunctionsFromELF, and returns
 // per-function detection details alongside aggregated detectionStats.
 // stripTool is the strip binary to use (e.g. "strip" for the host arch,
@@ -286,7 +342,7 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized(t *testing.T) {
 
 // TestDetectFunctionsFromELF_StrippedC_Optimized validates that
 // DetectFunctionsFromELF correctly identifies all user functions in a
-// realistic optimized stripped C binary.
+// stripped C binary compiled at -O2.
 //
 // Source: testdata/stripped-app.c - a mixed text/numeric utility with 16
 // functions covering a range of shapes: loop-heavy leaves, multi-caller
@@ -318,15 +374,13 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 		}
 	}
 
-	// Full recall is required on AMD64: all 16 functions survive -O2.
+	// Full recall is required: all 16 functions survive -O2 on AMD64.
 	if stats.truePositives < stats.total {
 		t.Errorf("true positive rate %.0f%% (%d/%d): expected 100%%; missed: %v",
 			stats.tpRate(), stats.truePositives, stats.total, stats.missed)
 	}
 
-	// FP multiplier must stay below 1.0x. Genuine FPs are intra-function
-	// aligned addresses picked up by the boundary scanner (~0.62x baseline
-	// with gcc 14.2.0).
+	// FP multiplier must stay below 1.0x (~0.62x baseline with gcc 14.2.0).
 	if stats.fpMultiplier() >= 1.0 {
 		t.Errorf("false positive multiplier %.2fx >= 1.00x: detector is too noisy",
 			stats.fpMultiplier())
@@ -334,6 +388,85 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 
 	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
 		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
+}
+
+// TestDetectFunctionsFromELF_RealWorld_Grep validates detection on a real-world
+// AMD64 stripped binary: Debian grep 3.11-4 compiled with full gcc hardening.
+//
+// Ground truth: all 333 STT_FUNC symbols from the matching grep-dbgsym debug
+// file (198 global + 134 local static functions, plus 1 GLIBC import).
+// The binary at /usr/bin/grep is already stripped.
+//
+// Baseline numbers (trixie, gcc 14.2.0):
+//   - true positives:  250/333 (75.1%)
+//   - false positives: 939 (2.82x)
+//
+// Thresholds are wider than the synthetic fixture tests: grep has ~144 KB of
+// dense optimised code with many intra-function aligned addresses, LTO-merged
+// functions, and cold-path sections that do not carry prologues or call-site
+// edges. These numbers are the honest real-world baseline.
+//
+// Skipped if /usr/bin/grep is not stripped or grep-dbgsym is not installed.
+func TestDetectFunctionsFromELF_RealWorld_Grep(t *testing.T) {
+	const binPath = "/usr/bin/grep"
+
+	if !isStripped(t, binPath) {
+		t.Skip("grep binary is not stripped; test requires stripped system binary")
+	}
+
+	dbgPath, err := findDebugFile(t, binPath)
+	if err != nil {
+		t.Skipf("grep-dbgsym not available: %v", err)
+	}
+
+	// Ground truth: every STT_FUNC symbol in the debug file.
+	allFuncs := allFunctionVAs(t, dbgPath)
+	total := len(allFuncs)
+	if total == 0 {
+		t.Fatal("no STT_FUNC symbols in debug file; ground truth is empty")
+	}
+
+	f, err := os.Open(binPath)
+	if err != nil {
+		t.Fatalf("os.Open(%s): %v", binPath, err)
+	}
+	defer f.Close()
+
+	candidates, err := resurgo.DetectFunctionsFromELF(f)
+	if err != nil {
+		t.Fatalf("DetectFunctionsFromELF: %v", err)
+	}
+
+	tp, fp := 0, 0
+	for _, c := range candidates {
+		if _, ok := allFuncs[c.Address]; ok {
+			tp++
+		} else {
+			fp++
+		}
+	}
+
+	tpRate := float64(tp) * 100 / float64(total)
+	fpMul := float64(fp) / float64(total)
+
+	t.Logf("total_funcs:     %d", total)
+	t.Logf("detected:        %d", len(candidates))
+	t.Logf("true_positives:  %d (%.1f%%)", tp, tpRate)
+	t.Logf("false_positives: %d (%.2fx)", fp, fpMul)
+
+	// At least 70% recall. Baseline (grep 3.11-4, gcc 14.2.0): 75.1%.
+	if tpRate < 70.0 {
+		t.Errorf("true positive rate %.1f%% < 70.0%%: regression?", tpRate)
+	}
+
+	// FP multiplier must stay below 4.0x. Baseline: 2.82x.
+	// Denser code means more intra-function false positives than in the
+	// synthetic fixture; a higher FP rate is expected and documented.
+	if fpMul >= 4.0 {
+		t.Errorf("false positive multiplier %.2fx >= 4.00x: too noisy", fpMul)
+	}
+
+	t.Logf("snapshot: tp_rate=%.1f%% fp_multiplier=%.2fx", tpRate, fpMul)
 }
 
 // TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64 validates detection
