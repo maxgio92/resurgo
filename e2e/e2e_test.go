@@ -304,40 +304,102 @@ func measure(
 // DetectFunctionsFromELF finds all user-defined functions in a stripped C
 // binary compiled without optimisation.
 //
-// Expected: 100% true-positive rate; false positives present at roughly 1x
-// (CRT scaffolding and PLT stubs); observe() at high confidence due to its
-// high call-site density.
+// Source: testdata/stripped-app.c - the same 16-function realistic fixture
+// used by the optimized tests. At -O0 -fno-inline all 16 functions survive
+// as distinct symbols; 100% recall is required.
 func TestDetectFunctionsFromELF_StrippedC_Unoptimized(t *testing.T) {
-	userFuncs := []string{"observe", "add", "multiply", "subtract", "divide", "main"}
+	userFuncs := []string{
+		"word_count", "longest_word", "vowel_count", "char_count",
+		"is_printable", "checksum",
+		"arr_min", "arr_max", "arr_sum", "arr_sort", "arr_find",
+		"fib", "gcd",
+		"report_str", "report_arr", "main",
+	}
 
 	byVA, truth, stats := measure(
 		t, "gcc", "strip", []string{"-O0", "-fno-inline"},
-		"../testdata/demo-app.c", userFuncs,
+		"testdata/stripped-app.c", userFuncs,
 	)
 	stats.logSummary(t)
 
-	// Full recall is required for the unoptimized case.
+	// Full recall is required: -O0 preserves all 16 functions.
 	if stats.truePositives < stats.total {
 		t.Errorf("true positive rate %.0f%% (%d/%d): expected 100%%; missed: %v",
 			stats.tpRate(), stats.truePositives, stats.total, stats.missed)
 	}
 
-	// FP multiplier should stay below 0.5x. PLT stubs are filtered and
-	// CRT functions are excluded from the FP count (they are real
-	// detections); only genuinely spurious addresses remain.
+	// FP multiplier must stay below 0.5x. PLT stubs are filtered and
+	// CRT functions are excluded from the FP count.
 	if stats.fpMultiplier() >= 0.5 {
 		t.Errorf("false positive multiplier %.2fx >= 0.50x: detector is too noisy",
 			stats.fpMultiplier())
 	}
 
-	// observe() is called from four functions (twice each) and must reach
-	// high confidence.
-	va := truth["observe"]
-	if c, ok := byVA[va]; !ok {
-		t.Errorf("observe(0x%x): not detected", va)
-	} else if c.Confidence != resurgo.ConfidenceHigh {
-		t.Errorf("observe(0x%x): confidence=%s, want high", va, c.Confidence)
+	// report_str and report_arr are called multiple times from main
+	// and must reach high confidence.
+	for _, name := range []string{"report_str", "report_arr"} {
+		va := truth[name]
+		if c, ok := byVA[va]; !ok {
+			t.Errorf("%s(0x%x): not detected", name, va)
+		} else if c.Confidence != resurgo.ConfidenceHigh {
+			t.Errorf("%s(0x%x): confidence=%s, want high", name, va, c.Confidence)
+		}
 	}
+
+	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
+		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
+}
+
+// TestDetectFunctionsFromELF_StrippedC_Unoptimized_ARM64 verifies that
+// DetectFunctionsFromELF finds all user-defined functions in a
+// cross-compiled ARM64 stripped binary compiled without optimisation.
+//
+// At -O0 -fno-inline all 16 functions survive as distinct symbols.
+// Unlike the -O2 case, small leaf functions are not packed at 4-byte
+// boundaries without prologues, so 100% recall is expected.
+//
+// Skipped if aarch64-linux-gnu-gcc or aarch64-linux-gnu-strip are not in PATH.
+func TestDetectFunctionsFromELF_StrippedC_Unoptimized_ARM64(t *testing.T) {
+	userFuncs := []string{
+		"word_count", "longest_word", "vowel_count", "char_count",
+		"is_printable", "checksum",
+		"arr_min", "arr_max", "arr_sum", "arr_sort", "arr_find",
+		"fib", "gcd",
+		"report_str", "report_arr", "main",
+	}
+
+	byVA, truth, stats := measure(
+		t, "aarch64-linux-gnu-gcc", "aarch64-linux-gnu-strip",
+		[]string{"-O0", "-fno-inline"},
+		"testdata/stripped-app.c", userFuncs,
+	)
+	stats.logSummary(t)
+
+	// report_str and report_arr are called multiple times from main
+	// and must reach high confidence on ARM64.
+	for _, name := range []string{"report_str", "report_arr"} {
+		va := truth[name]
+		if c, ok := byVA[va]; !ok {
+			t.Errorf("%s(0x%x): not detected", name, va)
+		} else if c.Confidence != resurgo.ConfidenceHigh {
+			t.Errorf("%s(0x%x): confidence=%s, want high", name, va, c.Confidence)
+		}
+	}
+
+	// Full recall is required: -O0 preserves all 16 functions on ARM64.
+	if stats.truePositives < stats.total {
+		t.Errorf("true positive rate %.0f%% (%d/%d): expected 100%%; missed: %v",
+			stats.tpRate(), stats.truePositives, stats.total, stats.missed)
+	}
+
+	// FP multiplier must stay below 0.5x.
+	if stats.fpMultiplier() >= 0.5 {
+		t.Errorf("false positive multiplier %.2fx >= 0.50x: detector is too noisy",
+			stats.fpMultiplier())
+	}
+
+	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
+		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
 }
 
 // TestDetectFunctionsFromELF_StrippedC_Optimized validates that
