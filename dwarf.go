@@ -1,9 +1,11 @@
 package resurgo
 
 import (
+	"cmp"
 	"debug/elf"
 	"encoding/binary"
 	"fmt"
+	"slices"
 )
 
 // DetectionEhFrame is assigned to function candidates whose entry address
@@ -343,4 +345,60 @@ func parseEhFrameEntries(f *elf.File) ([]uint64, error) {
 	}
 
 	return entries, nil
+}
+
+// applyEhFrame applies .eh_frame FDE data to the candidate slice.
+// When fdeVAs is empty it returns candidates unchanged (fallback for binaries
+// without .eh_frame). Otherwise it:
+//   - drops candidates whose address is not confirmed by any FDE
+//   - appends pure FDE hits (functions invisible to disassembly heuristics)
+//   - re-sorts the result by address
+func applyEhFrame(candidates []FunctionCandidate, fdeVAs []uint64) []FunctionCandidate {
+	if len(fdeVAs) == 0 {
+		return candidates
+	}
+
+	fdeSet := make(map[uint64]struct{}, len(fdeVAs))
+	for _, va := range fdeVAs {
+		fdeSet[va] = struct{}{}
+	}
+
+	// Keep only candidates confirmed by an FDE.
+	filtered := candidates[:0]
+	for _, c := range candidates {
+		if _, ok := fdeSet[c.Address]; ok {
+			filtered = append(filtered, c)
+		}
+	}
+	candidates = filtered
+
+	// Append FDE-only hits not already found by disassembly.
+	disasmSet := make(map[uint64]struct{}, len(candidates))
+	for _, c := range candidates {
+		disasmSet[c.Address] = struct{}{}
+	}
+	for _, va := range fdeVAs {
+		if _, ok := disasmSet[va]; !ok {
+			candidates = append(candidates, FunctionCandidate{
+				Address:       va,
+				DetectionType: DetectionEhFrame,
+				Confidence:    ConfidenceHigh,
+			})
+		}
+	}
+
+	slices.SortFunc(candidates, func(a, b FunctionCandidate) int {
+		return cmp.Compare(a.Address, b.Address)
+	})
+	return candidates
+}
+
+// ehFrameFilter parses .eh_frame and applies the FDE whitelist to the
+// candidate slice. See applyEhFrame for the merge logic.
+func ehFrameFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
+	fdeVAs, err := parseEhFrameEntries(f)
+	if err != nil {
+		return nil, fmt.Errorf("parse .eh_frame: %w", err)
+	}
+	return applyEhFrame(cs, fdeVAs), nil
 }

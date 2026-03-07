@@ -1,6 +1,32 @@
 package resurgo
 
-import "slices"
+import (
+	"debug/elf"
+	"slices"
+)
+
+// CandidateFilter applies an ELF-aware transformation to a candidate slice.
+// Each filter reads only what it needs from f and returns the updated slice.
+type CandidateFilter func([]FunctionCandidate, *elf.File) ([]FunctionCandidate, error)
+
+// elfFilters is the ordered list of ELF-specific candidate filters applied by
+// DetectFunctionsFromELF after the disassembly pipeline. Each strategy
+// registers its filter here; order matters.
+var elfFilters = []CandidateFilter{
+	pltFilter,
+	ehFrameFilter,
+}
+
+// pltFilter removes candidates that land inside linker-generated PLT sections.
+func pltFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
+	var pltRanges [][2]uint64
+	for _, name := range []string{".plt", ".plt.got", ".plt.sec", ".iplt"} {
+		if sec := f.Section(name); sec != nil {
+			pltRanges = append(pltRanges, [2]uint64{sec.Addr, sec.Addr + sec.Size})
+		}
+	}
+	return filterCandidatesInRanges(cs, pltRanges), nil
+}
 
 // filterCandidatesInRanges removes candidates whose addresses fall within any
 // of the given address ranges. Each range is a [lo, hi) pair.
@@ -90,22 +116,3 @@ func filterJumpTargetsByAnchorRange(candidates map[uint64]*FunctionCandidate) {
 	}
 }
 
-// filterByEhFrame removes disassembly candidates whose address does not
-// appear in fdeVAs. This uses the .eh_frame FDE set as a whitelist:
-// only addresses confirmed by an FDE (i.e. compiler-generated function
-// entries) are kept; all other candidates are treated as false positives.
-//
-// If fdeVAs is empty the function returns candidates unchanged, preserving
-// the disassembly-only pipeline as the fallback when .eh_frame is absent.
-func filterByEhFrame(candidates []FunctionCandidate, fdeVAs map[uint64]struct{}) []FunctionCandidate {
-	if len(fdeVAs) == 0 {
-		return candidates
-	}
-	result := candidates[:0]
-	for _, c := range candidates {
-		if _, ok := fdeVAs[c.Address]; ok {
-			result = append(result, c)
-		}
-	}
-	return result
-}

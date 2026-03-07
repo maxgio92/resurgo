@@ -185,59 +185,11 @@ func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error) {
 		return nil, err
 	}
 
-	// Remove candidates that land inside linker-generated PLT sections.
-	// The call-site scanner records CALL/JMP targets regardless of which
-	// section they resolve to; PLT stubs are not real function entries.
-	pltNames := []string{".plt", ".plt.got", ".plt.sec", ".iplt"}
-	var pltRanges [][2]uint64
-	for _, name := range pltNames {
-		if sec := f.Section(name); sec != nil {
-			pltRanges = append(pltRanges, [2]uint64{sec.Addr, sec.Addr + sec.Size})
+	for _, filter := range elfFilters {
+		candidates, err = filter(candidates, f)
+		if err != nil {
+			return nil, err
 		}
-	}
-	candidates = filterCandidatesInRanges(candidates, pltRanges)
-
-	// Use .eh_frame FDE entries as a high-confidence whitelist.
-	// Every FDE covers exactly one function range and its initial_location
-	// is a compiler-written function entry — not inferred by heuristics.
-	fdeVAs, err := parseEhFrameEntries(f)
-	if err != nil {
-		return nil, fmt.Errorf("parse .eh_frame: %w", err)
-	}
-
-	if len(fdeVAs) > 0 {
-		// Build a set for O(1) lookup.
-		fdeSet := make(map[uint64]struct{}, len(fdeVAs))
-		for _, va := range fdeVAs {
-			fdeSet[va] = struct{}{}
-		}
-
-		// Drop disassembly candidates not confirmed by any FDE.
-		candidates = filterByEhFrame(candidates, fdeSet)
-
-		// Build a set of addresses already covered by disassembly candidates
-		// so we can add FDE-only entries without duplication.
-		disasmSet := make(map[uint64]struct{}, len(candidates))
-		for _, c := range candidates {
-			disasmSet[c.Address] = struct{}{}
-		}
-
-		// Emit one DetectionEhFrame candidate per FDE VA not already
-		// covered by the disassembly pipeline (pure FDE hits).
-		for _, va := range fdeVAs {
-			if _, ok := disasmSet[va]; !ok {
-				candidates = append(candidates, FunctionCandidate{
-					Address:       va,
-					DetectionType: DetectionEhFrame,
-					Confidence:    ConfidenceHigh,
-				})
-			}
-		}
-
-		// Re-sort by address so the result slice stays ordered.
-		slices.SortFunc(candidates, func(a, b FunctionCandidate) int {
-			return cmp.Compare(a.Address, b.Address)
-		})
 	}
 
 	return candidates, nil
