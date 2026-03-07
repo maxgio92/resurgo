@@ -89,3 +89,23 @@ func filterJumpTargetsByAnchorRange(candidates map[uint64]*FunctionCandidate) {
 		}
 	}
 }
+
+// filterByEhFrame removes disassembly candidates whose address does not
+// appear in fdeVAs. This uses the .eh_frame FDE set as a whitelist:
+// only addresses confirmed by an FDE (i.e. compiler-generated function
+// entries) are kept; all other candidates are treated as false positives.
+//
+// If fdeVAs is empty the function returns candidates unchanged, preserving
+// the disassembly-only pipeline as the fallback when .eh_frame is absent.
+func filterByEhFrame(candidates []FunctionCandidate, fdeVAs map[uint64]struct{}) []FunctionCandidate {
+	if len(fdeVAs) == 0 {
+		return candidates
+	}
+	result := candidates[:0]
+	for _, c := range candidates {
+		if _, ok := fdeVAs[c.Address]; ok {
+			result = append(result, c)
+		}
+	}
+	return result
+}

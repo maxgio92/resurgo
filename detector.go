@@ -147,7 +147,11 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 
 // DetectFunctionsFromELF parses an ELF binary from the given reader, extracts
 // the .text section, and returns detected function candidates using combined
-// prologue detection, call site analysis, and alignment-based boundary detection.
+// prologue detection, call site analysis, and alignment-based boundary
+// detection, followed by FP filters (PLT section ranges, intra-function jump
+// targets). When .eh_frame is present, FDE entries are used as a whitelist to
+// discard disassembly candidates that are not confirmed by the compiler, and
+// any function entries visible only in .eh_frame are added to the result.
 // The architecture is inferred from the ELF header.
 func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error) {
 	f, err := elf.NewFile(r)
@@ -192,6 +196,49 @@ func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error) {
 		}
 	}
 	candidates = filterCandidatesInRanges(candidates, pltRanges)
+
+	// Use .eh_frame FDE entries as a high-confidence whitelist.
+	// Every FDE covers exactly one function range and its initial_location
+	// is a compiler-written function entry — not inferred by heuristics.
+	fdeVAs, err := parseEhFrameEntries(f)
+	if err != nil {
+		return nil, fmt.Errorf("parse .eh_frame: %w", err)
+	}
+
+	if len(fdeVAs) > 0 {
+		// Build a set for O(1) lookup.
+		fdeSet := make(map[uint64]struct{}, len(fdeVAs))
+		for _, va := range fdeVAs {
+			fdeSet[va] = struct{}{}
+		}
+
+		// Drop disassembly candidates not confirmed by any FDE.
+		candidates = filterByEhFrame(candidates, fdeSet)
+
+		// Build a set of addresses already covered by disassembly candidates
+		// so we can add FDE-only entries without duplication.
+		disasmSet := make(map[uint64]struct{}, len(candidates))
+		for _, c := range candidates {
+			disasmSet[c.Address] = struct{}{}
+		}
+
+		// Emit one DetectionEhFrame candidate per FDE VA not already
+		// covered by the disassembly pipeline (pure FDE hits).
+		for _, va := range fdeVAs {
+			if _, ok := disasmSet[va]; !ok {
+				candidates = append(candidates, FunctionCandidate{
+					Address:       va,
+					DetectionType: DetectionEhFrame,
+					Confidence:    ConfidenceHigh,
+				})
+			}
+		}
+
+		// Re-sort by address so the result slice stays ordered.
+		slices.SortFunc(candidates, func(a, b FunctionCandidate) int {
+			return cmp.Compare(a.Address, b.Address)
+		})
+	}
 
 	return candidates, nil
 }
