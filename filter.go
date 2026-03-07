@@ -1,6 +1,32 @@
 package resurgo
 
-import "slices"
+import (
+	"debug/elf"
+	"slices"
+)
+
+// CandidateFilter applies an ELF-aware transformation to a candidate slice.
+// Each filter reads only what it needs from f and returns the updated slice.
+type CandidateFilter func([]FunctionCandidate, *elf.File) ([]FunctionCandidate, error)
+
+// elfFilters is the ordered list of ELF-specific candidate filters applied by
+// DetectFunctionsFromELF after the disassembly pipeline. Each strategy
+// registers its filter here; order matters.
+var elfFilters = []CandidateFilter{
+	pltFilter,
+	ehFrameFilter,
+}
+
+// pltFilter removes candidates that land inside linker-generated PLT sections.
+func pltFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
+	var pltRanges [][2]uint64
+	for _, name := range []string{".plt", ".plt.got", ".plt.sec", ".iplt"} {
+		if sec := f.Section(name); sec != nil {
+			pltRanges = append(pltRanges, [2]uint64{sec.Addr, sec.Addr + sec.Size})
+		}
+	}
+	return filterCandidatesInRanges(cs, pltRanges), nil
+}
 
 // filterCandidatesInRanges removes candidates whose addresses fall within any
 // of the given address ranges. Each range is a [lo, hi) pair.
@@ -89,3 +115,4 @@ func filterJumpTargetsByAnchorRange(candidates map[uint64]*FunctionCandidate) {
 		}
 	}
 }
+

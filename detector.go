@@ -147,7 +147,11 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 
 // DetectFunctionsFromELF parses an ELF binary from the given reader, extracts
 // the .text section, and returns detected function candidates using combined
-// prologue detection, call site analysis, and alignment-based boundary detection.
+// prologue detection, call site analysis, and alignment-based boundary
+// detection, followed by FP filters (PLT section ranges, intra-function jump
+// targets). When .eh_frame is present, FDE entries are used as a whitelist to
+// discard disassembly candidates that are not confirmed by the compiler, and
+// any function entries visible only in .eh_frame are added to the result.
 // The architecture is inferred from the ELF header.
 func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error) {
 	f, err := elf.NewFile(r)
@@ -181,17 +185,12 @@ func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error) {
 		return nil, err
 	}
 
-	// Remove candidates that land inside linker-generated PLT sections.
-	// The call-site scanner records CALL/JMP targets regardless of which
-	// section they resolve to; PLT stubs are not real function entries.
-	pltNames := []string{".plt", ".plt.got", ".plt.sec", ".iplt"}
-	var pltRanges [][2]uint64
-	for _, name := range pltNames {
-		if sec := f.Section(name); sec != nil {
-			pltRanges = append(pltRanges, [2]uint64{sec.Addr, sec.Addr + sec.Size})
+	for _, filter := range elfFilters {
+		candidates, err = filter(candidates, f)
+		if err != nil {
+			return nil, err
 		}
 	}
-	candidates = filterCandidatesInRanges(candidates, pltRanges)
 
 	return candidates, nil
 }
