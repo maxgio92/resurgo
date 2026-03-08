@@ -1,4 +1,4 @@
-# EH Frame Detection
+# CFI Detection
 
 This document describes resurgo's `.eh_frame`-based strategy for function entry detection.
 
@@ -139,23 +139,23 @@ Walking algorithm:
 
 ## Integration in `DetectFunctionsFromELF`
 
-After opening the ELF and before returning:
+`DetectFunctionsFromELF` runs an ordered list of `CandidateFilter` functions
+after the disassembly pipeline. The CFI filter is one entry in that list.
+When called it:
 
-1. Call `parseEhFrameEntries(f)`.
-2. If it returns entries, build `fdeSet map[uint64]struct{}`.
-3. Run `filterByEhFrame(candidates, fdeSet)`: keep only disassembly candidates
-   whose address appears in `fdeSet`. This eliminates FP noise.
-4. Emit one additional `FunctionCandidate{DetectionType: DetectionEhFrame}`
-   for each FDE VA not already covered by a disassembly candidate (pure FDE
-   hits - functions invisible to all heuristics).
-5. If `parseEhFrameEntries` returns nil: skip all of the above; return the
-   current disassembly pipeline output unchanged.
+1. Calls `parseEhFrameEntries(f)` to get all FDE entry addresses.
+2. If the result is empty (`.eh_frame` absent): returns candidates unchanged.
+3. Drops disassembly candidates not confirmed by any FDE (FP elimination).
+4. Appends pure CFI hits: functions visible only in `.eh_frame`, not found
+   by any disassembly heuristic, emitted as `DetectionCFI` with high
+   confidence.
+5. Re-sorts the result by address.
 
 PLT filtering still runs before this step.
 
 ## Confidence and detection type
 
-Candidates sourced from `.eh_frame` receive `DetectionEhFrame`. Because FDE
+Candidates sourced from CFI data receive `DetectionCFI`. Because FDE
 entries are compiler-generated and not inferred, they are treated as the
 highest-confidence source. Disassembly candidates confirmed by an FDE may be
 promoted or merged with the richer disassembly metadata.

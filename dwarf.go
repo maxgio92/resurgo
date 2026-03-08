@@ -8,11 +8,12 @@ import (
 	"slices"
 )
 
-// DetectionEhFrame is assigned to function candidates whose entry address
-// was read directly from an .eh_frame FDE record rather than inferred by
-// disassembly heuristics. These addresses are written by the compiler and
-// are the highest-confidence source available on stripped binaries.
-const DetectionEhFrame DetectionType = "eh-frame"
+// DetectionCFI is assigned to function candidates whose entry address was
+// read from DWARF Call Frame Information (CFI) rather than inferred by
+// disassembly heuristics. On ELF binaries the CFI is stored in .eh_frame.
+// These addresses are written by the compiler and are the highest-confidence
+// source available on stripped binaries.
+const DetectionCFI DetectionType = "cfi"
 
 // .eh_frame FDE pointer-encoding constants (DW_EH_PE_*).
 //
@@ -381,7 +382,7 @@ func applyEhFrame(candidates []FunctionCandidate, fdeVAs []uint64) []FunctionCan
 		if _, ok := disasmSet[va]; !ok {
 			candidates = append(candidates, FunctionCandidate{
 				Address:       va,
-				DetectionType: DetectionEhFrame,
+				DetectionType: DetectionCFI,
 				Confidence:    ConfidenceHigh,
 			})
 		}
