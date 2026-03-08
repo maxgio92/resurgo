@@ -105,8 +105,7 @@ almost always < 128, so the savings are real.
 
 ## FDE pointer encoding (`DW_EH_PE_*`)
 
-The FDE pointer encoding byte is split into two nibbles (a nibble is 4 bits,
-half a byte):
+The FDE pointer encoding byte is split into two nibbles (half a byte each):
 
 - **Upper nibble** - base: where the value is relative to.
   `0x0_` = absolute; `0x1_` = PC-relative (relative to the address of the
