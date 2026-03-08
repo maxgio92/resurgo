@@ -276,9 +276,11 @@ func parseCIE(data []byte, off, end, ptrSize int) (cieInfo, error) {
 			if off >= augDataEnd {
 				break
 			}
-			enc := data[off]
+			enc := data[off] // encoding byte tells us the pointer format
 			off++
 			var err error
+			// Skip the pointer value — its size depends on enc and ptrSize.
+			// We only need to advance past it to reach the 'R' field.
 			off, err = skipEncodedPointer(data, off, enc, ptrSize)
 			if err != nil {
 				return info, fmt.Errorf("skip personality pointer: %w", err)
