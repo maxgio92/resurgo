@@ -35,6 +35,15 @@ Every record starts with two fixed fields:
   means this record is an FDE, and the value is the byte offset from the
   current position back to the associated CIE.
 
+```
+offset 0
+|
+v
+[length  4B][CIE_id  4B][         payload          ][ next record ...
+|           |_______________ length ________________|
+|___________________________________ length + 4 ____|
+```
+
 Advance to the next record by jumping `length + 4` bytes from the start of the
 current record.
 
