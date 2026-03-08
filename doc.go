@@ -9,8 +9,7 @@
 //   - DWARF CFI-based: when the binary contains an .eh_frame section, the
 //     initial_location fields from its FDE records are used as an authoritative
 //     whitelist. These addresses were written by the compiler and survive
-//     strip --strip-all, making CFI the highest-confidence source available
-//     on stripped binaries.
+//     making CFI the highest-confidence source available on stripped binaries.
 //
 // The primary entry point for most callers is [DetectFunctionsFromELF], which
 // accepts an [io.ReaderAt] (e.g. *os.File), infers the target architecture from

@@ -33,7 +33,7 @@ Candidates from all three signals are merged and scored. ELF-specific false-posi
 
 ### DWARF CFI-based
 
-When the binary contains an `.eh_frame` section, resurgo parses its FDE (Frame Description Entry) records and uses their `initial_location` fields as a high-confidence function entry set. These addresses were written by the compiler - not inferred by heuristics - and survive `strip --strip-all` because the OS needs `.eh_frame` for signal delivery and stack unwinding at runtime.
+When the binary contains an `.eh_frame` section, resurgo parses its FDE (Frame Description Entry) records and uses their `initial_location` fields as a high-confidence function entry set. These addresses were written by the compiler - not inferred by heuristics - and are typically present in stripped ELF binaries where `.symtab` and `.debug_*` are long gone.
 
 When `.eh_frame` is present it acts as an authoritative whitelist: disassembly candidates not covered by any FDE are dropped as noise, and FDE entries with no matching disassembly candidate are promoted directly. See [docs/CFI.md](docs/CFI.md).
 

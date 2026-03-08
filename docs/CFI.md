@@ -15,9 +15,8 @@ unconditionally - including leaf functions, cold paths, and internal helpers
 that carry no other detectable signal (no prologue, never called directly).
 
 Each FDE contains the function's precise entry address (`initial_location`).
-Critically, `.eh_frame` survives `strip --strip-all` because the OS needs it
-for signal delivery and stack unwinding at runtime. It is present in
-production stripped binaries where `.symtab` and `.debug_*` are long gone.
+Critically, `.eh_frame` is typically present in production stripped binaries
+where `.symtab` and `.debug_*` are long gone.
 
 This makes CFI the highest-confidence detection source in resurgo: the
 addresses it provides were written by the compiler, not inferred by heuristics.
