@@ -316,8 +316,7 @@ func decodeFDEInitialLocation(
 		return 0, false // field absent; FDE has no initial_location
 	}
 
-	// fieldVA is the virtual address of this field in the loaded binary.
-	// Required for PC-relative decoding.
+	// fieldVA is the VA of the initial_location field in the loaded binary; needed for PC-relative decoding.
 	fieldVA := secAddr + uint64(off)
 
 	switch enc {
