@@ -56,7 +56,7 @@ const (
 	DetectionPrologueOnly DetectionType = "prologue-only"
 	DetectionCallTarget   DetectionType = "call-target"
 	DetectionJumpTarget   DetectionType = "jump-target"
-	DetectionBoth         DetectionType = "both" // Prologue + called/jumped to
+	DetectionPrologueCallSite DetectionType = "prologue-callsite" // Prologue + called/jumped to
 )
 
 // FunctionCandidate represents a potential function detected through

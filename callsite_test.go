@@ -499,7 +499,7 @@ func TestDetectFunctions(t *testing.T) {
 		t.Fatal("expected candidate at address 0x20, got none")
 	}
 
-	if candidate0x20.DetectionType != resurgo.DetectionBoth {
+	if candidate0x20.DetectionType != resurgo.DetectionPrologueCallSite {
 		t.Errorf("expected detection type 'both', got %s", candidate0x20.DetectionType)
 	}
 

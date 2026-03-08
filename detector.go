@@ -74,7 +74,7 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 		candidate, exists := candidates[edge.TargetAddr]
 		if exists {
 			// Address has both prologue and is called/jumped to - highest confidence
-			candidate.DetectionType = DetectionBoth
+			candidate.DetectionType = DetectionPrologueCallSite
 			candidate.Confidence = ConfidenceHigh
 			if edge.Type == CallSiteCall {
 				candidate.CalledFrom = append(candidate.CalledFrom, edge.SourceAddr)

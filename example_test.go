@@ -114,5 +114,5 @@ func ExampleDetectFunctions() {
 	}
 	// Output:
 	// 0x1000: prologue-only (confidence: medium)
-	// 0x1020: both (confidence: high)
+	// 0x1020: prologue-callsite (confidence: high)
 }
