@@ -61,8 +61,8 @@ repeating common metadata in every FDE. Its body contains:
    - `'R'` - the block contains a pointer encoding byte for `initial_location`
    - `'P'` - the block contains a personality routine pointer (C++ exception handler)
    - `'L'` - the block contains an LSDA (Language Specific Data Area) encoding byte
-3. **Code alignment factor** (ULEB128)
-4. **Data alignment factor** (SLEB128)
+3. **Code alignment factor** (ULEB128) - scale factor for advance-location instructions (e.g. 1 on x86-64, 4 on ARM64). Consumed to advance past it; not used for entry detection.
+4. **Data alignment factor** (SLEB128) - scale factor for register-save offset instructions (e.g. -8 on x86-64). Consumed to advance past it; not used for entry detection.
 5. **Return address register** (1 byte)
 6. **Augmentation data block** (only if `'z'` is in the augmentation string):
    the binary payload for the fields declared in the augmentation string. The
