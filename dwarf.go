@@ -92,6 +92,7 @@ func parseEhFrameEntries(f *elf.File) ([]uint64, error) {
 	bo := f.ByteOrder
 	secAddr := sec.Addr
 
+	// ptrSize drives both absptr decoding and CIE_id back-reference arithmetic.
 	ptrSize := 4
 	if f.Class == elf.ELFCLASS64 {
 		ptrSize = 8
@@ -113,7 +114,7 @@ func parseEhFrameEntries(f *elf.File) ([]uint64, error) {
 		off += 4
 
 		if length == 0 {
-			break // terminator record
+			break // zero-length record signals end of section
 		}
 		if length == 0xffffffff {
 			// 64-bit DWARF extended form: real length follows as uint64.
@@ -128,10 +129,11 @@ func parseEhFrameEntries(f *elf.File) ([]uint64, error) {
 
 		recEnd := off + length
 		if recEnd > len(data) {
-			break
+			break // truncated section; stop
 		}
 
 		if off+4 > recEnd {
+			// Record too short to contain CIE_id; skip.
 			off = recEnd
 			continue
 		}
@@ -139,7 +141,7 @@ func parseEhFrameEntries(f *elf.File) ([]uint64, error) {
 		off += 4
 
 		if cieID == 0 {
-			// CIE record.
+			// CIE: parse and store so FDEs can look it up by offset.
 			cie, err := parseCIE(data, off, recEnd, ptrSize)
 			if err != nil {
 				// Malformed CIE — skip; FDEs referencing it will also be skipped.
@@ -148,14 +150,14 @@ func parseEhFrameEntries(f *elf.File) ([]uint64, error) {
 			}
 			cies[recStart] = cie
 		} else {
-			// FDE record.
-			// CIE_id is the byte offset from the CIE_id field's own position
-			// back to the start of the referenced CIE record.
+			// FDE: CIE_id is a byte offset from the CIE_id field's own
+			// position back to the start of the referenced CIE record.
 			cieFieldOff := off - 4
 			cieOff := cieFieldOff - int(cieID)
 
 			cie, ok := cies[cieOff]
 			if !ok {
+				// Referenced CIE not seen yet or malformed reference; skip FDE.
 				off = recEnd
 				continue
 			}
