@@ -66,11 +66,19 @@ repeating common metadata in every FDE. Its body contains:
 5. **Return address register** (1 byte)
 6. **Augmentation data block** (only if `'z'` is in the augmentation string):
    the binary payload for the fields declared in the augmentation string. The
-   characters after `'z'` in the string, taken in order, tell you how to decode
-   it: `'R'` → read 1 byte (the FDE pointer encoding, **save this**); `'P'` →
-   read a pointer (skip); `'L'` → read 1 byte (skip). Example: augmentation
-   string `"zRL"` means the block contains the `R` byte followed by the `L`
-   byte.
+   characters after `'z'`, taken in order, tell you how to decode it: `'R'` →
+   read 1 byte (the FDE pointer encoding, **save this**); `'P'` → read a
+   pointer (skip); `'L'` → read 1 byte (skip).
+
+   ```
+   Augmentation string: "z R L \0"
+                            | |
+                            | +-- 'L' field → 1 byte  in the block (skip)
+                            +---- 'R' field → 1 byte  in the block (save: FDE pointer encoding)
+
+   Augmentation data block:
+   [block length ULEB128][ R: 1 byte ][ L: 1 byte ]
+   ```
 
 ### FDE - Frame Description Entry
 
