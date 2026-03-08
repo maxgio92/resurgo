@@ -163,8 +163,9 @@ func parseEhFrameEntries(f *elf.File) ([]uint64, error) {
 			}
 
 			// off now points at initial_location, the first field of the FDE body.
-			// secAddr is needed to resolve PC-relative encodings; fdeEncoding
-			// was extracted from the CIE's 'R' augmentation datum.
+			// secAddr resolves PC-relative encodings; fdeEncoding was extracted
+			// from the CIE's 'R' augmentation datum; bo and ptrSize are the
+			// ELF-level byte order and pointer width.
 			va, ok := decodeFDEInitialLocation(
 				data, off, secAddr, cie.fdeEncoding, bo, ptrSize,
 			)
