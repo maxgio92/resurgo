@@ -27,6 +27,16 @@ addresses it provides were written by the compiler, not inferred by heuristics.
 The `.eh_frame` section is a flat sequence of records, back to back in memory.
 Every record starts with two fixed fields:
 
+```
++----------+----------+- - - - - - - - - - -+
+| length   | CIE_id   |       payload        |
+| 4 bytes  | 4 bytes  |       variable       |
++----------+----------+- - - - - - - - - - -+
+                |
+                +-- 0       -> CIE (shared header)
+                +-- non-zero -> FDE (offset back to its CIE)
+```
+
 - **`length` (4 bytes):** how many bytes follow, not counting `length` itself.
   `0` is a terminator - stop parsing. `0xffffffff` signals the 64-bit extended
   form (the real length is in the next 8 bytes); this is rare and skipped for
