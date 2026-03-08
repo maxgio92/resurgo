@@ -15,6 +15,28 @@ import (
 // source available on stripped binaries.
 const DetectionCFI DetectionType = "cfi"
 
+// .eh_frame FDE pointer-encoding constants (DW_EH_PE_*).
+//
+// The encoding byte is split into two nibbles:
+//   - lower nibble: data format (how the value is stored in the binary)
+//   - upper nibble: base (what the decoded value is relative to)
+//
+// Only the two encodings common on Linux x86-64 and ARM64 are handled.
+// Any other encoding causes the FDE to be skipped silently.
+const (
+	ehPeAbsptr      = byte(0x00) // absolute, pointer-sized (4 or 8 bytes)
+	ehPeSdata4      = byte(0x0b) // signed 32-bit integer
+	ehPePcrel       = byte(0x10) // PC-relative: add field's own VA to value
+	ehPeOmit        = byte(0xff) // field is not present; skip FDE
+	ehPePcrelSdata4 = ehPePcrel | ehPeSdata4 // 0x1b — most common on Linux
+)
+
+// cieInfo holds the fields extracted from a CIE that are needed when
+// decoding FDEs that reference it.
+type cieInfo struct {
+	fdeEncoding byte // DW_EH_PE_* byte from 'R' augmentation datum
+}
+
 // ehFrameFilter parses .eh_frame and applies the FDE whitelist to the
 // candidate slice. See applyEhFrame for the merge logic.
 func ehFrameFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
@@ -180,12 +202,6 @@ func parseEhFrameEntries(f *elf.File) ([]uint64, error) {
 	return entries, nil
 }
 
-// cieInfo holds the fields extracted from a CIE that are needed when
-// decoding FDEs that reference it.
-type cieInfo struct {
-	fdeEncoding byte // DW_EH_PE_* byte from 'R' augmentation datum
-}
-
 // parseCIE parses the body of a CIE record (the bytes after CIE_id, up to
 // end) and returns the extracted cieInfo. The default fdeEncoding is
 // ehPeAbsptr (absolute pointer) when no 'R' augmentation datum is present.
@@ -278,22 +294,6 @@ func parseCIE(data []byte, off, end, ptrSize int) (cieInfo, error) {
 
 	return info, nil
 }
-
-// .eh_frame FDE pointer-encoding constants (DW_EH_PE_*).
-//
-// The encoding byte is split into two nibbles:
-//   - lower nibble: data format (how the value is stored in the binary)
-//   - upper nibble: base (what the decoded value is relative to)
-//
-// Only the two encodings common on Linux x86-64 and ARM64 are handled.
-// Any other encoding causes the FDE to be skipped silently.
-const (
-	ehPeAbsptr      = byte(0x00) // absolute, pointer-sized (4 or 8 bytes)
-	ehPeSdata4      = byte(0x0b) // signed 32-bit integer
-	ehPePcrel       = byte(0x10) // PC-relative: add field's own VA to value
-	ehPeOmit        = byte(0xff) // field is not present; skip FDE
-	ehPePcrelSdata4 = ehPePcrel | ehPeSdata4 // 0x1b — most common on Linux
-)
 
 // decodeFDEInitialLocation decodes the initial_location field of an FDE.
 // off is the byte offset of the field within data; secAddr is the section's
