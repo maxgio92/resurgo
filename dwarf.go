@@ -298,9 +298,9 @@ func parseCIE(data []byte, off, end, ptrSize int) (cieInfo, error) {
 }
 
 // decodeFDEInitialLocation decodes the initial_location field of an FDE.
-// off is the byte offset of the field within data; secAddr is the section's
-// load address, used to compute the field's own virtual address for
-// PC-relative encodings.
+// data is the raw .eh_frame section bytes; off is the byte offset of the
+// field within data; secAddr is the section's load address, used to compute
+// the field's own virtual address for PC-relative encodings.
 //
 // Returns the absolute virtual address and true on success, or 0, false if
 // the encoding is unsupported or the data is truncated.
