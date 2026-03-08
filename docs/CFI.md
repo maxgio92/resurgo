@@ -62,6 +62,15 @@ current record.
 A CIE is the shared header referenced by one or more FDEs. It avoids
 repeating common metadata in every FDE. Its body contains:
 
+```
++----------+----------+---------+----------------+------------+------------+----------+----------+----------+
+| length   | CIE_id=0 | version | aug string \0  | code_align | data_align | ret_reg  | aug len  | aug data |
+| 4 bytes  | 4 bytes  | 1 byte  | variable       | ULEB128    | SLEB128    | 1 byte   | ULEB128  | variable |
++----------+----------+---------+----------------+------------+------------+----------+----------+----------+
+                                                                                       |___________________|
+                                                                                       only if 'z' in aug string
+```
+
 1. **Version** (1 byte)
 2. **Augmentation string** (null-terminated ASCII) - a schema that declares
    which extra fields will appear in the augmentation data block (field 6
