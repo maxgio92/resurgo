@@ -144,13 +144,10 @@ Walking algorithm:
 1. Find the `.eh_frame` section. If absent, return `nil, nil`.
 2. Read all section bytes; record the section's load address (`sec.Addr`).
 3. Walk records in a loop, tracking `offset` within the section bytes:
-   a. Read `length` (4 bytes, host byte order from `f.ByteOrder`). Stop if `0`.
-      Skip if `0xffffffff` (64-bit form).
+   a. Read `length` (4 bytes, host byte order from `f.ByteOrder`). Stop if `0`. Skip if `0xffffffff` (64-bit form).
    b. Read `CIE_id` (4 bytes).
-   c. If `CIE_id == 0`: parse the CIE, extract and store the FDE encoding byte,
-      keyed by the CIE's offset in the section.
-   d. If `CIE_id != 0`: look up the FDE encoding byte from the referenced CIE.
-      Decode `initial_location`; append the resolved VA to results.
+   c. If `CIE_id == 0`: parse the CIE, extract and store the FDE encoding byte, keyed by the CIE's offset in the section.
+   d. If `CIE_id != 0`: look up the FDE encoding byte from the referenced CIE. Decode `initial_location`; append the resolved VA to results.
    e. Advance `offset` by `length + 4`.
 4. Return the collected VA slice.
 
