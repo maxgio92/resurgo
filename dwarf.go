@@ -380,9 +380,13 @@ func readULEB128(b []byte, off int) (val uint64, n int) {
 	var shift uint
 	for i := off; i < len(b); i++ {
 		byt := b[i]
-		val |= uint64(byt&0x7f) << shift // accumulate 7 payload bits at position shift
-		shift += 7                        // next group sits 7 bits higher
-		if byt&0x80 == 0 {               // MSB clear = last byte
+		// byt&0x7f strips the continuation bit (MSB), leaving 7 payload bits.
+		// <<shift places them at the right position in the accumulator:
+		// first byte at bits 0-6, second at 7-13, and so on.
+		// |= merges without disturbing the bits placed by previous iterations.
+		val |= uint64(byt&0x7f) << shift
+		shift += 7
+		if byt&0x80 == 0 { // MSB clear = last byte
 			return val, i - off + 1
 		}
 	}
@@ -396,10 +400,12 @@ func readSLEB128(b []byte, off int) (val int64, n int) {
 	var shift uint
 	for i := off; i < len(b); i++ {
 		byt := b[i]
-		val |= int64(byt&0x7f) << shift // accumulate 7 payload bits at position shift
-		shift += 7                       // next group sits 7 bits higher
-		if byt&0x80 == 0 {              // MSB clear = last byte
-			// bit 6 is the sign bit of the last 7-bit group; extend it to fill upper bits
+		// Same accumulation as ULEB128: strip MSB, place 7 bits at position shift.
+		val |= int64(byt&0x7f) << shift
+		shift += 7
+		if byt&0x80 == 0 { // MSB clear = last byte
+			// bit 6 of the last byte is the sign bit of the 7-bit group.
+			// If set, the value is negative: fill all bits above shift with 1s.
 			if shift < 64 && byt&0x40 != 0 {
 				val |= ^int64(0) << shift
 			}
