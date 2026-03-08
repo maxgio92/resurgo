@@ -1,6 +1,6 @@
 # CFI Detection
 
-This document describes resurgo's `.eh_frame`-based strategy for function entry detection.
+This document describes resurgo's DWARF CFI-based strategy for function entry detection, using records from the `.eh_frame` section.
 
 ## Overview
 
@@ -19,7 +19,7 @@ Critically, `.eh_frame` survives `strip --strip-all` because the OS needs it
 for signal delivery and stack unwinding at runtime. It is present in
 production stripped binaries where `.symtab` and `.debug_*` are long gone.
 
-This makes `.eh_frame` the highest-confidence detection source in resurgo: the
+This makes CFI the highest-confidence detection source in resurgo: the
 addresses it provides were written by the compiler, not inferred by heuristics.
 
 ## Record structure
