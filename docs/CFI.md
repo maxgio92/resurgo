@@ -53,23 +53,24 @@ A CIE is the shared header referenced by one or more FDEs. It avoids
 repeating common metadata in every FDE. Its body contains:
 
 1. **Version** (1 byte)
-2. **Augmentation string** (null-terminated ASCII) - an extensibility hook.
-   The base DWARF spec defines a fixed field set, but `.eh_frame` needed extra
-   data for Linux runtime unwinding and C++ exception handling. Rather than
-   bumping the format version, the spec added the augmentation string: each
-   character signals an extra field. Common characters:
-   - `'z'` - an augmentation data block follows (with a ULEB128 length prefix)
-   - `'R'` - FDE pointer encoding byte (how `initial_location` is encoded)
-   - `'P'` - personality routine pointer (C++ exception handler)
-   - `'L'` - LSDA (Language Specific Data Area) encoding byte
+2. **Augmentation string** (null-terminated ASCII) - a schema that declares
+   which extra fields will appear in the augmentation data block (field 6
+   below), and in what order. Each character is a flag:
+   - `'z'` - an augmentation data block follows; its length is ULEB128-encoded
+     before the fields. If `'z'` is absent the block does not exist.
+   - `'R'` - the block contains a pointer encoding byte for `initial_location`
+   - `'P'` - the block contains a personality routine pointer (C++ exception handler)
+   - `'L'` - the block contains an LSDA (Language Specific Data Area) encoding byte
 3. **Code alignment factor** (ULEB128)
 4. **Data alignment factor** (SLEB128)
 5. **Return address register** (1 byte)
 6. **Augmentation data block** (only if `'z'` is in the augmentation string):
-   read its length (ULEB128), then process one byte per augmentation character
-   after `'z'`: skip `'L'` (1 byte), skip `'P'` (pointer), and for `'R'`
-   **save the byte** - it is the FDE pointer encoding for all FDEs that
-   reference this CIE.
+   the binary payload for the fields declared in the augmentation string. The
+   characters after `'z'` in the string, taken in order, tell you how to decode
+   it: `'R'` → read 1 byte (the FDE pointer encoding, **save this**); `'P'` →
+   read a pointer (skip); `'L'` → read 1 byte (skip). Example: augmentation
+   string `"zRL"` means the block contains the `R` byte followed by the `L`
+   byte.
 
 ### FDE - Frame Description Entry
 
