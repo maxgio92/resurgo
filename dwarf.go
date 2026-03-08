@@ -338,8 +338,7 @@ func decodeFDEInitialLocation(
 			return 0, false // truncated PC-relative value
 		}
 		rel := int32(bo.Uint32(data[off : off+4]))
-		// sdata4 is relative to the field's own address; add fieldVA to resolve to absolute VA.
-		return fieldVA + uint64(int64(rel)), true
+		return fieldVA + uint64(int64(rel)), true // rel is a signed offset from fieldVA (the field's VA in the loaded binary)
 
 	default:
 		return 0, false // unsupported encoding; skip FDE silently
