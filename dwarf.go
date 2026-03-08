@@ -338,7 +338,7 @@ func decodeFDEInitialLocation(
 			return 0, false // truncated PC-relative value
 		}
 		rel := int32(bo.Uint32(data[off : off+4]))
-		return fieldVA + uint64(int64(rel)), true // rel is a signed offset from fieldVA (the field's VA in the loaded binary)
+		return fieldVA + uint64(int64(rel)), true // PC-relative: rel + VA of the initial_location field itself
 
 	default:
 		return 0, false // unsupported encoding; skip FDE silently
