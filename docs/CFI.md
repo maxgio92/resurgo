@@ -92,20 +92,20 @@ Its body starts with:
 
 ```
 CIE:
-┌──────────┬──────────┬─────────┬────────────────┬────────────┬────────────┬──────────┬──────────┬──────────┐
-│ length   │ CIE_id=0 │ version │ aug string \0  │ code_align │ data_align │ ret_reg  │ aug len  │ aug data │
-│ 4 bytes  │ 4 bytes  │ 1 byte  │ variable       │ ULEB128    │ SLEB128    │ 1 byte   │ ULEB128  │ variable │
-└──────────┴──────────┴─────────┴────────────────┴────────────┴────────────┴──────────┴──────────┴──────────┘
-                                                                                        └────────────────────┘
-                                                                                        only if 'z' in aug string
++----------+----------+---------+----------------+------------+------------+----------+----------+----------+
+| length   | CIE_id=0 | version | aug string \0  | code_align | data_align | ret_reg  | aug len  | aug data |
+| 4 bytes  | 4 bytes  | 1 byte  | variable       | ULEB128    | SLEB128    | 1 byte   | ULEB128  | variable |
++----------+----------+---------+----------------+------------+------------+----------+----------+----------+
+                                                                                       |___________________|
+                                                                                       only if 'z' in aug string
 
 FDE:
-┌──────────┬─────────────────┬──────────────────┬───────────────┬────────────────────────┐
-│ length   │ CIE_pointer     │ initial_location │ address_range │ aug data + CFI opcodes │
-│ 4 bytes  │ 4 bytes         │ variable         │ variable      │ skipped                │
-└──────────┴─────────────────┴──────────────────┴───────────────┴────────────────────────┘
-                                       ↑
-                             encoding from CIE 'R' field
++----------+-----------------+------------------+---------------+------------------------+
+| length   | CIE_pointer     | initial_location | address_range | aug data + CFI opcodes |
+| 4 bytes  | 4 bytes         | variable         | variable      | skipped                |
++----------+-----------------+------------------+---------------+------------------------+
+                                      ^
+                            encoding from CIE 'R' field
 ```
 
 ## ULEB128 and SLEB128
