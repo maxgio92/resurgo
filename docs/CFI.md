@@ -86,7 +86,7 @@ An FDE covers one contiguous code range (one function, or an inlined region).
 Its body starts with:
 
 - **`initial_location`** - the entry address of the covered range, encoded per
-  the FDE pointer encoding byte saved from its CIE.
+  the FDE pointer encoding byte saved from its CIE (stored in the CIE augmentation block).
 - **`address_range`** - the size of the covered range (same encoding, unsigned).
 - Augmentation data and CFI opcodes (not needed for entry detection; skipped).
 
