@@ -90,19 +90,32 @@ candidates, err := resurgo.DetectFunctions(data, 0x400000, resurgo.ArchAMD64)
 ## API Reference
 
 ```go
-// Combined detection - merges prologue, call-site, and boundary signals.
+// DetectFunctions merges prologue, call-site, and boundary signals on raw
+// machine code bytes. baseAddr is the virtual address of the first byte of
+// code. arch selects architecture-specific detection logic.
 func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandidate, error)
 
-// ELF wrapper - parses the ELF, runs DetectFunctions, applies FP filters
-// (PLT ranges, intra-function jump targets, CFI whitelist when .eh_frame is present).
+// DetectFunctionsFromELF parses an ELF binary, runs all detection signals,
+// applies false-positive filters (PLT ranges, intra-function jump targets),
+// and, when .eh_frame is present, uses CFI FDE entries as a whitelist.
+// Architecture is inferred from the ELF header.
 func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error)
 
-// Lower-level: prologue detection only, on raw bytes.
+// DetectPrologues scans raw machine code bytes for architecture-specific
+// function prologue patterns. Works on any binary format.
 func DetectPrologues(code []byte, baseAddr uint64, arch Arch) ([]Prologue, error)
+
+// DetectProloguesFromELF parses an ELF binary and returns detected function
+// prologues. Architecture is inferred from the ELF header.
 func DetectProloguesFromELF(r io.ReaderAt) ([]Prologue, error)
 
-// Lower-level: call-site analysis only, on raw bytes.
+// DetectCallSites scans raw machine code bytes for CALL and JMP instructions
+// and returns their resolved target addresses. Works on any binary format.
 func DetectCallSites(code []byte, baseAddr uint64, arch Arch) ([]CallSiteEdge, error)
+
+// DetectCallSitesFromELF parses an ELF binary and returns detected call sites,
+// filtered to targets within the .text section.
+// Architecture is inferred from the ELF header.
 func DetectCallSitesFromELF(r io.ReaderAt) ([]CallSiteEdge, error)
 ```
 
