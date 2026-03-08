@@ -313,7 +313,7 @@ func decodeFDEInitialLocation(
 	ptrSize int,
 ) (uint64, bool) {
 	if enc == ehPeOmit {
-		return 0, false
+		return 0, false // field absent; FDE has no initial_location
 	}
 
 	// fieldVA is the virtual address of this field in the loaded binary.
@@ -324,25 +324,24 @@ func decodeFDEInitialLocation(
 	case ehPeAbsptr:
 		if ptrSize == 8 {
 			if off+8 > len(data) {
-				return 0, false
+				return 0, false // truncated 64-bit pointer
 			}
-			return bo.Uint64(data[off : off+8]), true
+			return bo.Uint64(data[off : off+8]), true // 64-bit absolute VA
 		}
 		if off+4 > len(data) {
-			return 0, false
+			return 0, false // truncated 32-bit pointer
 		}
-		return uint64(bo.Uint32(data[off : off+4])), true
+		return uint64(bo.Uint32(data[off : off+4])), true // 32-bit absolute VA
 
 	case ehPePcrelSdata4:
 		if off+4 > len(data) {
-			return 0, false
+			return 0, false // truncated PC-relative value
 		}
 		rel := int32(bo.Uint32(data[off : off+4]))
-		return fieldVA + uint64(int64(rel)), true
+		return fieldVA + uint64(int64(rel)), true // fieldVA + signed 32-bit offset
 
 	default:
-		// Unsupported encoding — skip silently.
-		return 0, false
+		return 0, false // unsupported encoding; skip FDE silently
 	}
 }
 
