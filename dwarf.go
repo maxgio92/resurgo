@@ -8,22 +8,22 @@ import (
 	"slices"
 )
 
-// DetectionCFI is assigned to function candidates whose entry address was
-// read from DWARF Call Frame Information (CFI) rather than inferred by
-// disassembly heuristics. On ELF binaries the CFI is stored in .eh_frame.
-// These addresses are written by the compiler and are the highest-confidence
-// source available on stripped binaries.
-const DetectionCFI DetectionType = "cfi"
-
-// .eh_frame FDE pointer-encoding constants (DW_EH_PE_*).
-//
-// The encoding byte is split into two nibbles:
-//   - lower nibble: data format (how the value is stored in the binary)
-//   - upper nibble: base (what the decoded value is relative to)
-//
-// Only the two encodings common on Linux x86-64 and ARM64 are handled.
-// Any other encoding causes the FDE to be skipped silently.
 const (
+	// DetectionCFI is assigned to function candidates whose entry address was
+	// read from DWARF Call Frame Information (CFI) rather than inferred by
+	// disassembly heuristics. On ELF binaries the CFI is stored in .eh_frame.
+	// These addresses are written by the compiler and are the highest-confidence
+	// source available on stripped binaries.
+	DetectionCFI DetectionType = "cfi"
+
+	// .eh_frame FDE pointer-encoding constants (DW_EH_PE_*).
+	//
+	// The encoding byte is split into two nibbles:
+	//   - lower nibble: data format (how the value is stored in the binary)
+	//   - upper nibble: base (what the decoded value is relative to)
+	//
+	// Only the two encodings common on Linux x86-64 and ARM64 are handled.
+	// Any other encoding causes the FDE to be skipped silently.
 	ehPeAbsptr      = byte(0x00) // absolute, pointer-sized (4 or 8 bytes)
 	ehPeSdata4      = byte(0x0b) // signed 32-bit integer
 	ehPePcrel       = byte(0x10) // PC-relative: add field's own VA to value
