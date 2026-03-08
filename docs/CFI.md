@@ -115,7 +115,7 @@ Its body starts with:
 | 4 bytes  | 4 bytes         | variable         | variable      | skipped                |
 +----------+-----------------+------------------+---------------+------------------------+
                                       ^
-                            encoding from CIE 'R' field
+                            encoding from 'R' field in CIE augmentation block
 ```
 
 ## ULEB128 and SLEB128
