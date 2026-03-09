@@ -194,7 +194,7 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 // The architecture is inferred from the ELF header.
 //
 // By default the full filter pipeline (PLTFilter, CETFilter, EhFrameFilter)
-// is applied. Use WithFilters to override it.
+// is applied. opts may include WithFilters to replace the default pipeline.
 func DetectFunctionsFromELF(r io.ReaderAt, opts ...Option) ([]FunctionCandidate, error) {
 	o := &options{
 		filters: []CandidateFilter{PLTFilter, CETFilter, EhFrameFilter},

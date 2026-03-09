@@ -37,8 +37,8 @@ type cieInfo struct {
 	fdeEncoding byte // DW_EH_PE_* byte from 'R' augmentation datum
 }
 
-// EhFrameFilter parses .eh_frame and applies the FDE whitelist to the
-// candidate slice. See applyEhFrame for the merge logic.
+// EhFrameFilter parses .eh_frame from f and applies the FDE whitelist to cs.
+// See applyEhFrame for the merge logic.
 func EhFrameFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
 	fdeVAs, err := parseEhFrameEntries(f)
 	if err != nil {
