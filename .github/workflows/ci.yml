@@ -47,14 +47,23 @@ jobs:
   test-e2e:
     name: Test (e2e)
     runs-on: ubuntu-latest
+    container: golang:1.25
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Build e2e image
-        run: docker build -t resurgo-e2e -f e2e/Dockerfile .
-      - name: Run e2e tests
+      - name: Install dependencies
         run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            resurgo-e2e \
-            go test -v -tags e2e ./e2e/...
+          echo 'deb http://deb.debian.org/debian-debug/ trixie-debug main' \
+            > /etc/apt/sources.list.d/debug.list
+          dpkg --add-architecture arm64
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            gcc binutils \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            libc6-dev-arm64-cross \
+            grep grep-dbgsym
+          apt-get download grep:arm64 grep-dbgsym:arm64
+          dpkg-deb -x grep_*arm64*.deb /opt/grep-arm64
+          dpkg-deb -x grep-dbgsym_*arm64*.deb /
+          rm -f grep_*arm64*.deb grep-dbgsym_*arm64*.deb
+      - name: Run e2e tests
+        run: go test -v -tags e2e ./e2e/...
