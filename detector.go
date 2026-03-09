@@ -12,6 +12,12 @@ import (
 )
 
 const (
+	// Confidence levels ordered from highest to lowest reliability.
+	ConfidenceHigh   Confidence = "high"
+	ConfidenceMedium Confidence = "medium"
+	ConfidenceLow    Confidence = "low"
+	ConfidenceNone   Confidence = "none"
+
 	// endbr64Byte{0..3} are the four bytes of the ENDBR64 instruction
 	// (F3 0F 1E FA). ENDBR32 shares the first three bytes but ends with 0xFB.
 	// These CET indirect-branch-tracking prefixes appear at function entries
@@ -22,6 +28,25 @@ const (
 	endbr64Byte3 = byte(0xFA)
 	endbr32Byte3 = byte(0xFB)
 )
+
+// Confidence represents the reliability level of a detected function candidate.
+type Confidence string
+
+// DetectionType represents the signal or combination of signals that
+// produced a function candidate.
+type DetectionType string
+
+// FunctionCandidate represents a potential function entry point detected
+// through one or more signals (prologue matching, call-site analysis,
+// boundary analysis, or CFI).
+type FunctionCandidate struct {
+	Address       uint64        `json:"address"`
+	DetectionType DetectionType `json:"detection_type"`
+	PrologueType  PrologueType  `json:"prologue_type,omitempty"`
+	CalledFrom    []uint64      `json:"called_from,omitempty"`
+	JumpedFrom    []uint64      `json:"jumped_from,omitempty"`
+	Confidence    Confidence    `json:"confidence"`
+}
 
 // isENDBR reports whether the 4 bytes at code[i:i+4] encode an ENDBR64
 // (F3 0F 1E FA) or ENDBR32 (F3 0F 1E FB) instruction.
@@ -74,7 +99,7 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 		candidate, exists := candidates[edge.TargetAddr]
 		if exists {
 			// Address has both prologue and is called/jumped to - highest confidence
-			candidate.DetectionType = DetectionBoth
+			candidate.DetectionType = DetectionPrologueCallSite
 			candidate.Confidence = ConfidenceHigh
 			if edge.Type == CallSiteCall {
 				candidate.CalledFrom = append(candidate.CalledFrom, edge.SourceAddr)
@@ -421,4 +446,3 @@ func DetectProloguesFromELF(r io.ReaderAt) ([]Prologue, error) {
 		return nil, fmt.Errorf("unsupported ELF machine: %s", f.Machine)
 	}
 }
-

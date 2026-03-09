@@ -34,7 +34,7 @@ func arm64BranchInsn(opBase uint32, source, target uint64) uint32 {
 // assertConvergence calls DetectFunctions, logs all candidates, and asserts
 // minimum convergence between prologue and call-site detection.
 // minTotal is the minimum number of candidates expected, minBoth the minimum
-// number of "both" candidates, and minRatio the minimum convergence ratio
+// number of "prologue-callsite" candidates, and minRatio the minimum convergence ratio
 // (both / total).
 func assertConvergence(t *testing.T, code []byte, baseAddr uint64, arch resurgo.Arch, minTotal, minBoth int, minRatio float64) {
 	t.Helper()
@@ -53,7 +53,7 @@ func assertConvergence(t *testing.T, code []byte, baseAddr uint64, arch resurgo.
 	}
 
 	total := len(candidates)
-	both := counts[resurgo.DetectionBoth]
+	both := counts[resurgo.DetectionPrologueCallSite]
 	ratio := float64(both) / float64(total)
 
 	t.Logf("total=%d both=%d prologue-only=%d call-target=%d jump-target=%d ratio=%.3f",
@@ -304,7 +304,7 @@ func TestDetectFunctions_Convergence(t *testing.T) {
 	//   funcF → funcG                  (tail-jump)
 	//   funcH                          (prologue only, not called)
 	//
-	// 12 functions, expected 8 "both" / 12 total = 0.667 convergence.
+	// 12 functions, expected 8 "prologue-callsite" / 12 total = 0.667 convergence.
 
 	t.Run("amd64", func(t *testing.T) {
 		code, base := buildSyntheticAMD64()

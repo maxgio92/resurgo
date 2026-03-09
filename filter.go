@@ -59,7 +59,7 @@ func filterCandidatesInRanges(candidates []FunctionCandidate, ranges [][2]uint64
 //
 // An anchor is a candidate confirmed by a CALL instruction
 // (DetectionCallTarget) or a prologue pattern (DetectionPrologueOnly,
-// DetectionBoth) - signals strong enough to treat as a reliable function
+// DetectionPrologueCallSite) - signals strong enough to treat as a reliable function
 // start. Consecutive anchor addresses define function body intervals.
 //
 // A JumpTarget candidate is removed only when it falls strictly between two
@@ -80,7 +80,7 @@ func filterJumpTargetsByAnchorRange(candidates map[uint64]*FunctionCandidate) {
 	for addr, c := range candidates {
 		if c.DetectionType == DetectionCallTarget ||
 			c.DetectionType == DetectionPrologueOnly ||
-			c.DetectionType == DetectionBoth {
+			c.DetectionType == DetectionPrologueCallSite {
 			anchors = append(anchors, addr)
 		}
 	}
@@ -115,4 +115,3 @@ func filterJumpTargetsByAnchorRange(candidates map[uint64]*FunctionCandidate) {
 		}
 	}
 }
-

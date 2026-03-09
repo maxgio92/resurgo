@@ -584,4 +584,3 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64(t *testing.T) {
 	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
 		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
 }
-

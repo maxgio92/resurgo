@@ -9,65 +9,42 @@ import (
 	"golang.org/x/arch/x86/x86asm"
 )
 
-// CallSiteType represents the type of call site instruction.
-type CallSiteType string
-
-// Recognized call site instruction types.
 const (
+	// Recognized call site instruction types.
 	CallSiteCall CallSiteType = "call"
 	CallSiteJump CallSiteType = "jump"
+
+	// Recognized addressing modes for call site instructions.
+	AddressingModePCRelative       AddressingMode = "pc-relative"
+	AddressingModeAbsolute         AddressingMode = "absolute"
+	AddressingModeRegisterIndirect AddressingMode = "register-indirect"
+
+	// DetectionCallTarget indicates the candidate was found only as a target
+	// of one or more CALL instructions.
+	DetectionCallTarget DetectionType = "call-target"
+
+	// DetectionJumpTarget indicates the candidate was found only as a target
+	// of one or more JMP instructions.
+	DetectionJumpTarget DetectionType = "jump-target"
+
+	// DetectionPrologueCallSite indicates the candidate was confirmed by both
+	// prologue matching and call-site analysis.
+	DetectionPrologueCallSite DetectionType = "prologue-callsite"
 )
+
+// CallSiteType represents the type of call site instruction.
+type CallSiteType string
 
 // AddressingMode represents how the target address is specified.
 type AddressingMode string
 
-// Recognized addressing modes for call site instructions.
-const (
-	AddressingModePCRelative       AddressingMode = "pc-relative"
-	AddressingModeAbsolute         AddressingMode = "absolute"
-	AddressingModeRegisterIndirect AddressingMode = "register-indirect"
-)
-
-// Confidence represents the reliability of a call site detection.
-type Confidence string
-
-// Confidence levels for call site detection.
-const (
-	ConfidenceHigh   Confidence = "high"
-	ConfidenceMedium Confidence = "medium"
-	ConfidenceLow    Confidence = "low"
-	ConfidenceNone   Confidence = "none"
-)
-
 // CallSiteEdge represents a detected call site (call or jump to a function).
 type CallSiteEdge struct {
-	SourceAddr  uint64          `json:"source_addr"`
-	TargetAddr  uint64          `json:"target_addr"`
-	Type        CallSiteType `json:"type"`
-	AddressMode AddressingMode  `json:"address_mode"`
-	Confidence  Confidence      `json:"confidence"`
-}
-
-// DetectionType represents how a function was detected.
-type DetectionType string
-
-// Recognized detection types.
-const (
-	DetectionPrologueOnly DetectionType = "prologue-only"
-	DetectionCallTarget   DetectionType = "call-target"
-	DetectionJumpTarget   DetectionType = "jump-target"
-	DetectionBoth         DetectionType = "both" // Prologue + called/jumped to
-)
-
-// FunctionCandidate represents a potential function detected through
-// one or more signals (prologue detection, call site analysis, or both).
-type FunctionCandidate struct {
-	Address       uint64        `json:"address"`
-	DetectionType DetectionType `json:"detection_type"`
-	PrologueType  PrologueType  `json:"prologue_type,omitempty"`
-	CalledFrom    []uint64      `json:"called_from,omitempty"`
-	JumpedFrom    []uint64      `json:"jumped_from,omitempty"`
-	Confidence    Confidence    `json:"confidence"`
+	SourceAddr  uint64         `json:"source_addr"`
+	TargetAddr  uint64         `json:"target_addr"`
+	Type        CallSiteType   `json:"type"`
+	AddressMode AddressingMode `json:"address_mode"`
+	Confidence  Confidence     `json:"confidence"`
 }
 
 // DetectCallSites analyzes raw machine code bytes and returns detected
@@ -135,7 +112,6 @@ func DetectCallSitesFromELF(r io.ReaderAt) ([]CallSiteEdge, error) {
 
 	return filtered, nil
 }
-
 
 func detectCallSitesAMD64(code []byte, baseAddr uint64) ([]CallSiteEdge, error) {
 	var result []CallSiteEdge
