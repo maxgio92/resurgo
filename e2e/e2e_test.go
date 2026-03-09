@@ -442,9 +442,9 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 			stats.tpRate(), stats.truePositives, stats.total, stats.missed)
 	}
 
-	// FP multiplier must stay below 1.0x (~0.62x baseline with gcc 14.2.0).
-	if stats.fpMultiplier() >= 1.0 {
-		t.Errorf("false positive multiplier %.2fx >= 1.00x: detector is too noisy",
+	// FP multiplier must stay below 0.5x (~0.12x baseline with gcc 14.2.0).
+	if stats.fpMultiplier() >= 0.5 {
+		t.Errorf("false positive multiplier %.2fx >= 0.50x: detector is too noisy",
 			stats.fpMultiplier())
 	}
 
@@ -459,14 +459,15 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 // file (198 global + 134 local static functions, plus 1 GLIBC import).
 // The binary at /usr/bin/grep is already stripped.
 //
-// Baseline numbers (trixie, gcc 14.2.0):
-//   - true positives:  250/333 (75.1%)
-//   - false positives: 939 (2.82x)
+// Baseline numbers (trixie, gcc 14.2.0, with .eh_frame detection):
+//   - true positives:  326/333 (98%)
+//   - false positives: 2 (0.01x)
 //
-// Thresholds are wider than the synthetic fixture tests: grep has ~144 KB of
-// dense optimised code with many intra-function aligned addresses, LTO-merged
-// functions, and cold-path sections that do not carry prologues or call-site
-// edges. These numbers are the honest real-world baseline.
+// The 7 missed functions are not covered by .eh_frame FDE entries (likely
+// hand-written assembly or linker-synthesised stubs without .cfi_* directives).
+// The 2 false positives are addresses in .text that are not STT_FUNC symbols
+// in the debug file but are targeted by FDE entries (possibly inlined or
+// renamed across versions).
 //
 // Skipped if /usr/bin/grep is not stripped or grep-dbgsym is not installed.
 func TestDetectFunctionsFromELF_RealWorld_Grep(t *testing.T) {
@@ -515,16 +516,14 @@ func TestDetectFunctionsFromELF_RealWorld_Grep(t *testing.T) {
 	t.Logf("missed:           %d/%d (%.0f%%)", missed, stats.total, stats.missedRate())
 	t.Logf("false_positives:  %d (%.2fx per real function)", stats.falsePositives, stats.fpMultiplier())
 
-	// At least 70% recall. Baseline (grep 3.11-4, gcc 14.2.0): 75.1%.
-	if stats.tpRate() < 70.0 {
-		t.Errorf("true positive rate %.1f%% < 70.0%%: regression?", stats.tpRate())
+	// At least 95% recall. Baseline (grep 3.11-4, gcc 14.2.0): 98%.
+	if stats.tpRate() < 95.0 {
+		t.Errorf("true positive rate %.1f%% < 95.0%%: regression?", stats.tpRate())
 	}
 
-	// FP multiplier must stay below 4.0x. Baseline: 2.82x.
-	// Denser code means more intra-function false positives than in the
-	// synthetic fixture; a higher FP rate is expected and documented.
-	if stats.fpMultiplier() >= 4.0 {
-		t.Errorf("false positive multiplier %.2fx >= 4.00x: too noisy",
+	// FP multiplier must stay below 0.1x. Baseline: 0.01x.
+	if stats.fpMultiplier() >= 0.1 {
+		t.Errorf("false positive multiplier %.2fx >= 0.10x: too noisy",
 			stats.fpMultiplier())
 	}
 
@@ -533,14 +532,13 @@ func TestDetectFunctionsFromELF_RealWorld_Grep(t *testing.T) {
 }
 
 // TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64 validates detection
-// on a cross-compiled ARM64 optimized stripped binary and documents the
-// known limitations for small leaf functions.
+// on a cross-compiled ARM64 optimized stripped binary.
 //
 // The test cross-compiles testdata/stripped-app.c with aarch64-linux-gnu-gcc
-// at -O2. On ARM64, small leaf functions (arr_min, arr_find, gcd) are packed
-// at 4-byte boundaries without 16-byte alignment fill, have no call-site
-// edges in the stripped binary, and are therefore undetectable by any current
-// strategy. All other functions are expected at high or medium confidence.
+// at -O2. Small leaf functions (arr_min, arr_find, gcd) are packed at 4-byte
+// boundaries without 16-byte alignment fill and have no call-site edges in the
+// stripped binary, but are recovered via .eh_frame FDE entries. Full recall
+// is now expected.
 //
 // Skipped if aarch64-linux-gnu-gcc or aarch64-linux-gnu-strip are not in PATH.
 func TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64(t *testing.T) {
@@ -570,18 +568,16 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64(t *testing.T) {
 		}
 	}
 
-	// At least 13/16 functions must be found. The three known misses
-	// (arr_min, arr_find, gcd) are small leaf functions with no
-	// call-site edges and no 16-byte alignment gap on ARM64.
-	if stats.truePositives < 13 {
-		t.Errorf("true positives: %d/%d - regression? expected >= 13; missed: %v",
-			stats.truePositives, stats.total, stats.missed)
+	// Full recall is required: .eh_frame recovers all 16 functions on ARM64,
+	// including small leaf functions invisible to disassembly heuristics.
+	if stats.truePositives < stats.total {
+		t.Errorf("true positive rate %.0f%% (%d/%d): expected 100%%; missed: %v",
+			stats.tpRate(), stats.truePositives, stats.total, stats.missed)
 	}
 
-	// FP multiplier must stay below 1.0x. Residual FPs are intra-CRT
-	// jump targets (~0.44x baseline with gcc 14.2.0 aarch64-linux-gnu).
-	if stats.fpMultiplier() >= 1.0 {
-		t.Errorf("false positive multiplier %.2fx >= 1.00x: detector is too noisy",
+	// FP multiplier must stay below 0.1x. Baseline: 0.00x.
+	if stats.fpMultiplier() >= 0.1 {
+		t.Errorf("false positive multiplier %.2fx >= 0.10x: detector is too noisy",
 			stats.fpMultiplier())
 	}
 

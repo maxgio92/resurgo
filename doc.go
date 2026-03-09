@@ -1,39 +1,27 @@
-// Package resurgo identifies functions in executable binaries through static
-// analysis using instruction-level disassembly. It provides two complementary
-// approaches:
+// Package resurgo provides static function recovery from stripped ELF binaries.
 //
-// # Prologue Detection
+// It combines two complementary detection strategies:
 //
-// Detects function entry points by recognizing common prologue patterns including
-// classic frame pointer setup (push rbp; mov rbp, rsp), no-frame-pointer functions
-// (sub rsp, imm), push-only prologues, and LEA-based stack allocation.
+//   - Disassembly-based: three parallel signals (prologue pattern matching,
+//     call-site analysis, and alignment boundary analysis) are merged and scored
+//     to produce a ranked set of function candidates.
 //
-// Use [DetectPrologues] to analyze raw bytes directly, or
-// [DetectProloguesFromELF] to extract and analyze the .text section of an ELF binary.
+//   - DWARF CFI-based: when the binary contains an .eh_frame section, the
+//     initial_location fields from its FDE records are used as an authoritative
+//     whitelist. These addresses were written by the compiler and survive
+//     making CFI the highest-confidence source available on stripped binaries.
 //
-// # Call Site Analysis
+// The primary entry point for most callers is [DetectFunctionsFromELF], which
+// accepts an [io.ReaderAt] (e.g. *os.File), infers the target architecture from
+// the ELF header, and returns a deduplicated, filtered slice of
+// [FunctionCandidate] values. Each candidate carries its virtual address,
+// detection type, and a confidence rating.
 //
-// Identifies functions by detecting CALL and JMP instructions and extracting their
-// target addresses. This approach works on heavily optimized code where prologues
-// may be omitted and is compiler-agnostic. It provides confidence scoring based on
-// instruction type (call vs jump) and addressing mode (direct vs indirect).
+// For format-agnostic use (non-ELF binaries, raw memory dumps) use
+// [DetectFunctions], which accepts raw machine code bytes and a base address.
 //
-// Use [DetectCallSites] to analyze raw bytes, or [DetectCallSitesFromELF]
-// for ELF binaries. Results are filtered to only include targets within the
-// .text section.
+// Lower-level APIs ([DetectPrologues], [DetectCallSites] and their FromELF
+// variants) are available when only a single signal is needed.
 //
-// # Combined Analysis
-//
-// For highest-confidence function detection, use [DetectFunctions] which combines
-// both prologue and call site analysis. Functions detected by both methods
-// receive the highest confidence rating. This is particularly effective for
-// recovering functions in stripped binaries or heavily optimized code.
-//
-// # Confidence Scoring
-//
-// The confidence level indicates the reliability of a detection:
-//   - High: Direct CALL instructions or prologue + called/jumped to
-//   - Medium: Unconditional JMP or prologue-only
-//   - Low: Conditional jumps (usually intra-function branches)
-//   - None: Register-indirect (cannot be statically resolved)
+// Supported architectures: x86_64 (AMD64) and ARM64 (AArch64).
 package resurgo
