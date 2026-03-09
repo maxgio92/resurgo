@@ -98,8 +98,18 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 // DetectFunctionsFromELF parses an ELF binary, runs all detection signals,
 // applies false-positive filters (PLT ranges, intra-function jump targets),
 // and, when .eh_frame is present, uses CFI FDE entries as a whitelist.
-// Architecture is inferred from the ELF header.
-func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error)
+// Architecture is inferred from the ELF header. opts may include WithFilters
+// to replace the default filter pipeline.
+func DetectFunctionsFromELF(r io.ReaderAt, opts ...Option) ([]FunctionCandidate, error)
+
+// WithFilters replaces the active filter pipeline. filters run in the order
+// provided. Pass no arguments to disable all filters.
+func WithFilters(filters ...CandidateFilter) Option
+
+// Built-in filters, enabled by default in the order listed:
+var PLTFilter     CandidateFilter  // removes PLT-section candidates
+var CETFilter     CandidateFilter  // drops non-ENDBR64 aligned entries on CET AMD64 binaries
+var EhFrameFilter CandidateFilter  // applies .eh_frame FDE whitelist
 
 // DetectPrologues scans raw machine code bytes for architecture-specific
 // function prologue patterns. Works on any binary format.
@@ -128,7 +138,7 @@ const (
     DetectionPrologueOnly DetectionType = "prologue-only"
     DetectionCallTarget   DetectionType = "call-target"
     DetectionJumpTarget   DetectionType = "jump-target"
-    DetectionBoth         DetectionType = "both"
+    DetectionPrologueCallSite DetectionType = "prologue-callsite"
     DetectionAlignedEntry DetectionType = "aligned-entry"
     DetectionCFI          DetectionType = "cfi"
 )

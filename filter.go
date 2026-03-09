@@ -16,7 +16,7 @@ type options struct {
 	filters []CandidateFilter
 }
 
-// WithFilters sets the filter pipeline applied after disassembly. Filters run
+// WithFilters sets the filter pipeline applied after disassembly. filters run
 // in the order provided. Pass no arguments to disable all filters.
 func WithFilters(filters ...CandidateFilter) Option {
 	return func(o *options) {
@@ -24,7 +24,8 @@ func WithFilters(filters ...CandidateFilter) Option {
 	}
 }
 
-// PLTFilter removes candidates that land inside linker-generated PLT sections.
+// PLTFilter removes candidates from cs that land inside linker-generated PLT
+// sections (.plt, .plt.got, .plt.sec, .iplt) as reported by f.
 func PLTFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
 	var pltRanges [][2]uint64
 	for _, name := range []string{".plt", ".plt.got", ".plt.sec", ".iplt"} {
@@ -35,11 +36,11 @@ func PLTFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error)
 	return filterCandidatesInRanges(cs, pltRanges), nil
 }
 
-// CETFilter applies the CET-aware ENDBR64 filter on AMD64 ELF binaries.
-// Non-AMD64 binaries are returned unchanged. The filter must run before
-// EhFrameFilter so that any aligned-entry candidate it drops can be recovered
-// as DetectionCFI when its address appears in an FDE record (e.g. _start has
-// no ENDBR64 but does have an FDE entry).
+// CETFilter filters cs using the CET-aware ENDBR64 heuristic, reading the
+// .text section from f. Non-AMD64 binaries are returned unchanged. The filter
+// must run before EhFrameFilter so that any aligned-entry candidate it drops
+// can be recovered as DetectionCFI when its address appears in an FDE record
+// (e.g. _start has no ENDBR64 but does have an FDE entry).
 func CETFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
 	if f.Machine != elf.EM_X86_64 {
 		return cs, nil
