@@ -40,12 +40,21 @@ type DetectionType string
 // through one or more signals (prologue matching, call-site analysis,
 // boundary analysis, or CFI).
 type FunctionCandidate struct {
-	Address       uint64        `json:"address"`
+	// Address is the virtual address of the function entry point.
+	Address uint64 `json:"address"`
+	// DetectionType is the signal or combination of signals that produced
+	// this candidate.
 	DetectionType DetectionType `json:"detection_type"`
-	PrologueType  PrologueType  `json:"prologue_type,omitempty"`
-	CalledFrom    []uint64      `json:"called_from,omitempty"`
-	JumpedFrom    []uint64      `json:"jumped_from,omitempty"`
-	Confidence    Confidence    `json:"confidence"`
+	// PrologueType is the matched prologue pattern, if any.
+	PrologueType PrologueType `json:"prologue_type,omitempty"`
+	// CalledFrom holds the virtual addresses of instructions that call this
+	// candidate directly.
+	CalledFrom []uint64 `json:"called_from,omitempty"`
+	// JumpedFrom holds the virtual addresses of instructions that jump to
+	// this candidate.
+	JumpedFrom []uint64 `json:"jumped_from,omitempty"`
+	// Confidence is the reliability level of this candidate.
+	Confidence Confidence `json:"confidence"`
 }
 
 // isENDBR reports whether the 4 bytes at code[i:i+4] encode an ENDBR64

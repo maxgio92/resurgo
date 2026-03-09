@@ -30,7 +30,11 @@ type PrologueType string
 
 // Prologue represents a detected function prologue.
 type Prologue struct {
-	Address      uint64       `json:"address"`
-	Type         PrologueType `json:"type"`
-	Instructions string       `json:"instructions"`
+	// Address is the virtual address of the detected prologue.
+	Address uint64 `json:"address"`
+	// Type is the matched prologue pattern.
+	Type PrologueType `json:"type"`
+	// Instructions is a human-readable representation of the matched
+	// prologue instructions.
+	Instructions string `json:"instructions"`
 }

@@ -40,11 +40,18 @@ type AddressingMode string
 
 // CallSiteEdge represents a detected call site (call or jump to a function).
 type CallSiteEdge struct {
-	SourceAddr  uint64         `json:"source_addr"`
-	TargetAddr  uint64         `json:"target_addr"`
-	Type        CallSiteType   `json:"type"`
+	// SourceAddr is the virtual address of the call or jump instruction.
+	SourceAddr uint64 `json:"source_addr"`
+	// TargetAddr is the virtual address of the call or jump target.
+	TargetAddr uint64 `json:"target_addr"`
+	// Type indicates whether this edge was produced by a call or jump
+	// instruction.
+	Type CallSiteType `json:"type"`
+	// AddressMode describes how the target address is encoded in the
+	// instruction.
 	AddressMode AddressingMode `json:"address_mode"`
-	Confidence  Confidence     `json:"confidence"`
+	// Confidence is the reliability level of this edge.
+	Confidence Confidence `json:"confidence"`
 }
 
 // DetectCallSites analyzes raw machine code bytes and returns detected
