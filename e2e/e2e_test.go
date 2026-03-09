@@ -35,10 +35,6 @@ func (s detectionStats) tpRate() float64 {
 	return float64(s.truePositives) / float64(s.total) * 100
 }
 
-func (s detectionStats) missedRate() float64 {
-	return 100 - s.tpRate()
-}
-
 // fpMultiplier returns the ratio of false positives to the total number of
 // real user functions (ground truth), regardless of how many were detected.
 // This measures noise relative to the true function population, not just the
@@ -54,38 +50,24 @@ func (s detectionStats) fpMultiplier() float64 {
 	return float64(s.falsePositives) / float64(s.total)
 }
 
-// logSummary writes a structured summary to t.Log so CI output is self-
-// explanatory without needing to read individual sub-test lines.
-func (s detectionStats) logSummary(t *testing.T) {
-	t.Helper()
-	t.Logf("true_positives:   %d/%d (%.0f%%)",
-		s.truePositives, s.total, s.tpRate())
-	t.Logf("missed:           %d/%d (%.0f%%) %v",
-		len(s.missed), s.total, s.missedRate(), s.missed)
-	if math.IsInf(s.fpMultiplier(), 1) {
-		t.Logf("false_positives:  %d (+Inf multiplier - no real functions in ground truth)",
-			s.falsePositives)
-	} else {
-		t.Logf("false_positives:  %d (%.2fx per real function)",
-			s.falsePositives, s.fpMultiplier())
-	}
+// statsRow is a labeled detectionStats entry for logStatsTable.
+type statsRow struct {
+	label string
+	stats detectionStats
 }
 
-// logStatsTable prints a compact two-row summary table comparing detection
-// metrics with and without zero-size CRT stubs in the ground truth.
-// all is the full ground truth view; noCRT excludes zero-size symbols.
-func logStatsTable(t *testing.T, all, noCRT detectionStats) {
+// logStatsTable prints a summary table with one row per entry in rows.
+func logStatsTable(t *testing.T, rows ...statsRow) {
 	t.Helper()
-	t.Logf("%-8s  %6s  %5s  %7s  %7s  %4s  %8s",
+	t.Logf("%-22s  %6s  %5s  %7s  %7s  %4s  %8s",
 		"", "total", "tp", "recall", "missed", "fp", "fp_mult")
-	t.Logf("%-8s  %6d  %5d  %6.0f%%  %7d  %4d  %7.2fx",
-		"all",
-		all.total, all.truePositives, all.tpRate(),
-		all.total-all.truePositives, all.falsePositives, all.fpMultiplier())
-	t.Logf("%-8s  %6d  %5d  %6.0f%%  %7d  %4d  %7.2fx",
-		"no_crt",
-		noCRT.total, noCRT.truePositives, noCRT.tpRate(),
-		noCRT.total-noCRT.truePositives, noCRT.falsePositives, noCRT.fpMultiplier())
+	for _, r := range rows {
+		t.Logf("%-22s  %6d  %5d  %6.0f%%  %7d  %4d  %7.2fx",
+			r.label,
+			r.stats.total, r.stats.truePositives, r.stats.tpRate(),
+			r.stats.total-r.stats.truePositives,
+			r.stats.falsePositives, r.stats.fpMultiplier())
+	}
 }
 
 // compileCBinary compiles src with compiler and cflags, writing the output to
@@ -359,7 +341,6 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized(t *testing.T) {
 		t, "gcc", "strip", []string{"-O0", "-fno-inline"},
 		"testdata/stripped-app.c", userFuncs,
 	)
-	stats.logSummary(t)
 
 	// Full recall is required: -O0 preserves all 16 functions.
 	if stats.truePositives < stats.total {
@@ -385,8 +366,7 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized(t *testing.T) {
 		}
 	}
 
-	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
-		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
+	logStatsTable(t, statsRow{"result", stats})
 }
 
 // TestDetectFunctionsFromELF_StrippedC_Unoptimized_ARM64 verifies that
@@ -412,7 +392,6 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized_ARM64(t *testing.T) {
 		[]string{"-O0", "-fno-inline"},
 		"testdata/stripped-app.c", userFuncs,
 	)
-	stats.logSummary(t)
 
 	// report_str and report_arr are called multiple times from main
 	// and must reach high confidence on ARM64.
@@ -437,8 +416,7 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized_ARM64(t *testing.T) {
 			stats.fpMultiplier())
 	}
 
-	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
-		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
+	logStatsTable(t, statsRow{"result", stats})
 }
 
 // TestDetectFunctionsFromELF_StrippedC_Optimized validates that
@@ -462,7 +440,6 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 		t, "gcc", "strip", []string{"-O2"},
 		"testdata/stripped-app.c", userFuncs,
 	)
-	stats.logSummary(t)
 
 	// report_str and report_arr are called multiple times from main
 	// and must reach high confidence.
@@ -487,27 +464,30 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 			stats.fpMultiplier())
 	}
 
-	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
-		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
+	logStatsTable(t, statsRow{"result", stats})
 }
 
 // TestDetectFunctionsFromELF_RealWorld_Grep_AMD64 validates detection on a
-// real-world AMD64 stripped binary: Debian grep 3.11-4 compiled with full gcc
-// hardening.
+// real-world AMD64 stripped binary: Debian grep 3.11-4 compiled with full
+// gcc hardening.
 //
-// Ground truth: all 333 STT_FUNC symbols from the matching grep-dbgsym debug
-// file (198 global + 134 local static functions, plus 1 GLIBC import).
-// The binary at /usr/bin/grep is already stripped.
+// The test runs four filter pipeline configurations in order to verify each
+// filter's contribution to FP reduction:
 //
-// Baseline numbers (trixie, gcc 14.2.0, with .eh_frame detection):
-//   - true positives:  326/333 (98%)
-//   - false positives: 2 (0.01x)
+//	none -> plt -> plt+cet -> plt+cet+cfi (default)
 //
-// The 7 missed functions are not covered by .eh_frame FDE entries (likely
-// hand-written assembly or linker-synthesised stubs without .cfi_* directives).
-// The 2 false positives are addresses in .text that are not STT_FUNC symbols
-// in the debug file but are targeted by FDE entries (possibly inlined or
-// renamed across versions).
+// Baseline numbers (trixie, gcc 14.2.0, 326 user functions):
+//
+//	none:    247 TP, 1073 FP (3.29x)
+//	plt:     247 TP,  942 FP (2.89x)
+//	plt+cet: 246 TP,  536 FP (1.64x)
+//	plt+cet+cfi (default): 326 TP, 2 FP (0.01x)
+//
+// Assertions:
+//   - FP decreases at each pipeline step
+//   - Full pipeline recall >= PLT-only recall (FDE recovers what CET dropped)
+//   - Default pipeline recall >= 98%, FP multiplier < 0.01x
+
 //
 // Skipped if /usr/bin/grep is not stripped or grep-dbgsym is not installed.
 func TestDetectFunctionsFromELF_RealWorld_Grep_AMD64(t *testing.T) {
@@ -522,12 +502,20 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_AMD64(t *testing.T) {
 		t.Skipf("grep-dbgsym not available: %v", err)
 	}
 
-	// Ground truth: all STT_FUNC symbols, and a CRT-excluded variant.
 	allFuncs := allFunctionVAs(t, dbgPath)
 	allFuncsNoCRT := allFunctionVAs(t, dbgPath, withoutCRT())
-	total := len(allFuncs)
-	if total == 0 {
+	if len(allFuncs) == 0 {
 		t.Fatal("no STT_FUNC symbols in debug file; ground truth is empty")
+	}
+
+	// crtVAs is the set of VAs excluded from the no_crt ground truth.
+	// Candidates at these addresses are ignored when scoring against
+	// allFuncsNoCRT: they are real functions, just out of scope.
+	crtVAs := make(map[uint64]struct{}, len(allFuncs)-len(allFuncsNoCRT))
+	for va := range allFuncs {
+		if _, ok := allFuncsNoCRT[va]; !ok {
+			crtVAs[va] = struct{}{}
+		}
 	}
 
 	f, err := os.Open(binPath)
@@ -536,34 +524,100 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_AMD64(t *testing.T) {
 	}
 	defer f.Close()
 
-	candidates, err := resurgo.DetectFunctionsFromELF(f)
-	if err != nil {
-		t.Fatalf("DetectFunctionsFromELF: %v", err)
+	// run scores detection results against gt. opts == nil uses the default
+	// pipeline. Candidates in crtVAs are skipped (neither TP nor FP).
+	run := func(gt map[uint64]elf.Symbol, opts []resurgo.Option) (detectionStats, []resurgo.FunctionCandidate) {
+		candidates, runErr := resurgo.DetectFunctionsFromELF(f, opts...)
+		if runErr != nil {
+			t.Fatalf("DetectFunctionsFromELF: %v", runErr)
+		}
+		var s detectionStats
+		s.total = len(gt)
+		for _, c := range candidates {
+			if _, ok := gt[c.Address]; ok {
+				s.truePositives++
+			} else if _, isCRT := crtVAs[c.Address]; !isCRT {
+				s.falsePositives++
+			}
+		}
+		return s, candidates
 	}
 
-	detectedVAs := make(map[uint64]struct{}, len(candidates))
-	for _, c := range candidates {
+	type pipelineCase struct {
+		label string
+		opts  []resurgo.Option // nil = default pipeline
+	}
+	pipeline := []pipelineCase{
+		{"none", []resurgo.Option{resurgo.WithFilters()}},
+		{"plt", []resurgo.Option{resurgo.WithFilters(resurgo.PLTFilter)}},
+		{"plt+cet", []resurgo.Option{resurgo.WithFilters(resurgo.PLTFilter, resurgo.CETFilter)}},
+		{"plt+cet+cfi (default)", nil},
+	}
+
+	results := make([]detectionStats, len(pipeline))
+	rows := make([]statsRow, len(pipeline))
+	var fullCandidates []resurgo.FunctionCandidate
+	for i, c := range pipeline {
+		var cands []resurgo.FunctionCandidate
+		results[i], cands = run(allFuncsNoCRT, c.opts)
+		rows[i] = statsRow{c.label, results[i]}
+		if i == len(pipeline)-1 {
+			fullCandidates = cands
+		}
+	}
+
+	// Compute CRT-inclusive stats for the full pipeline run. Insert before
+	// the plt+cet+cfi (default) row so the default pipeline result is the last line.
+	var fullAll detectionStats
+	fullAll.total = len(allFuncs)
+	for _, c := range fullCandidates {
+		if _, ok := allFuncs[c.Address]; ok {
+			fullAll.truePositives++
+		} else {
+			fullAll.falsePositives++
+		}
+	}
+	last := rows[len(rows)-1]
+	rows[len(rows)-1] = statsRow{"plt+cet+cfi (with crt)", fullAll}
+	rows = append(rows, last)
+	logStatsTable(t, rows...)
+
+	// Each filter stage must reduce FP.
+	for i := 1; i < len(pipeline); i++ {
+		if results[i].falsePositives >= results[i-1].falsePositives {
+			t.Errorf("%s did not reduce FP vs %s: %d -> %d",
+				pipeline[i].label, pipeline[i-1].label,
+				results[i-1].falsePositives, results[i].falsePositives)
+		}
+	}
+
+	// Each pipeline step must reach at least 70% recall. Guards against
+	// disassembly regressions that FDE recovery would otherwise mask.
+	for i, r := range results {
+		if r.tpRate() < 70.0 {
+			t.Errorf("%s: recall %.1f%% < 70.0%%: regression?",
+				pipeline[i].label, r.tpRate())
+		}
+	}
+
+	// plt+cet+cfi (default) recall must be >= PLT-only (FDE recovers what CET dropped).
+	pltIdx, fullIdx := 1, len(pipeline)-1
+	if results[fullIdx].truePositives < results[pltIdx].truePositives {
+		t.Errorf("plt+cet+cfi (default) regressed recall vs plt: tp %d -> %d",
+			results[pltIdx].truePositives, results[fullIdx].truePositives)
+	}
+
+	// Log FP and missed details for the full pipeline run.
+	detectedVAs := make(map[uint64]struct{}, len(fullCandidates))
+	for _, c := range fullCandidates {
 		detectedVAs[c.Address] = struct{}{}
 	}
-
-	var stats, statsNoCRT detectionStats
-	stats.total = total
-	statsNoCRT.total = len(allFuncsNoCRT)
-	for _, c := range candidates {
-		if _, ok := allFuncs[c.Address]; ok {
-			stats.truePositives++
-			if _, ok2 := allFuncsNoCRT[c.Address]; ok2 {
-				statsNoCRT.truePositives++
-			}
-		} else {
-			stats.falsePositives++
-			statsNoCRT.falsePositives++
+	for _, c := range fullCandidates {
+		if _, ok := allFuncs[c.Address]; !ok {
 			t.Logf("false_positive: 0x%x  %s  %s",
 				c.Address, c.DetectionType, c.Confidence)
 		}
 	}
-
-	// Log missed functions; zero-size symbols are CRT stubs (no body, no FDE).
 	for va, sym := range allFuncs {
 		if _, found := detectedVAs[va]; found {
 			continue
@@ -575,18 +629,15 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_AMD64(t *testing.T) {
 		}
 	}
 
-	// At least 95% recall. Baseline (grep 3.11-4, gcc 14.2.0): 98%.
-	if stats.tpRate() < 95.0 {
-		t.Errorf("true positive rate %.1f%% < 95.0%%: regression?", stats.tpRate())
+	// At least 98% recall. Baseline (grep 3.11-4, gcc 14.2.0): 98.2%.
+	if fullAll.tpRate() < 98.0 {
+		t.Errorf("true positive rate %.1f%% < 98.0%%: regression?", fullAll.tpRate())
 	}
-
-	// FP multiplier must stay below 0.1x. Baseline: 0.01x.
-	if stats.fpMultiplier() >= 0.1 {
-		t.Errorf("false positive multiplier %.2fx >= 0.10x: too noisy",
-			stats.fpMultiplier())
+	// FP multiplier must stay below 0.01x. Baseline: 0.006x.
+	if fullAll.fpMultiplier() >= 0.01 {
+		t.Errorf("false positive multiplier %.3fx >= 0.010x: too noisy",
+			fullAll.fpMultiplier())
 	}
-
-	logStatsTable(t, stats, statsNoCRT)
 }
 
 // TestDetectFunctionsFromELF_RealWorld_Grep_ARM64 validates detection on a
@@ -597,6 +648,11 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_AMD64(t *testing.T) {
 // avoid conflicting with grep:amd64 on /usr/bin/grep. Debug symbols are
 // resolved via the standard .build-id path after extracting grep-dbgsym:arm64
 // to /.
+//
+// Three filter pipeline configurations are tested. CET is not included as a
+// separate step because it is a no-op on ARM64.
+//
+//	none -> plt -> plt+cet+cfi (default)
 //
 // Skipped if the binary or its debug file is not present (e.g. outside the
 // e2e Docker image or CI container).
@@ -618,9 +674,18 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_ARM64(t *testing.T) {
 
 	allFuncs := allFunctionVAs(t, dbgPath)
 	allFuncsNoCRT := allFunctionVAs(t, dbgPath, withoutCRT())
-	total := len(allFuncs)
-	if total == 0 {
+	if len(allFuncs) == 0 {
 		t.Fatal("no STT_FUNC symbols in debug file; ground truth is empty")
+	}
+
+	// crtVAs is the set of VAs excluded from the no_crt ground truth.
+	// Candidates at these addresses are ignored when scoring against
+	// allFuncsNoCRT: they are real functions, just out of scope.
+	crtVAs := make(map[uint64]struct{}, len(allFuncs)-len(allFuncsNoCRT))
+	for va := range allFuncs {
+		if _, ok := allFuncsNoCRT[va]; !ok {
+			crtVAs[va] = struct{}{}
+		}
 	}
 
 	f, err := os.Open(binPath)
@@ -629,34 +694,99 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_ARM64(t *testing.T) {
 	}
 	defer f.Close()
 
-	candidates, err := resurgo.DetectFunctionsFromELF(f)
-	if err != nil {
-		t.Fatalf("DetectFunctionsFromELF: %v", err)
+	// run scores detection results against gt. opts == nil uses the default
+	// pipeline. Candidates in crtVAs are skipped (neither TP nor FP).
+	run := func(gt map[uint64]elf.Symbol, opts []resurgo.Option) (detectionStats, []resurgo.FunctionCandidate) {
+		candidates, runErr := resurgo.DetectFunctionsFromELF(f, opts...)
+		if runErr != nil {
+			t.Fatalf("DetectFunctionsFromELF: %v", runErr)
+		}
+		var s detectionStats
+		s.total = len(gt)
+		for _, c := range candidates {
+			if _, ok := gt[c.Address]; ok {
+				s.truePositives++
+			} else if _, isCRT := crtVAs[c.Address]; !isCRT {
+				s.falsePositives++
+			}
+		}
+		return s, candidates
 	}
 
-	detectedVAs := make(map[uint64]struct{}, len(candidates))
-	for _, c := range candidates {
+	type pipelineCase struct {
+		label string
+		opts  []resurgo.Option // nil = default pipeline
+	}
+	pipeline := []pipelineCase{
+		{"none", []resurgo.Option{resurgo.WithFilters()}},
+		{"plt", []resurgo.Option{resurgo.WithFilters(resurgo.PLTFilter)}},
+		{"plt+cet+cfi (default)", nil},
+	}
+
+	results := make([]detectionStats, len(pipeline))
+	rows := make([]statsRow, len(pipeline))
+	var fullCandidates []resurgo.FunctionCandidate
+	for i, c := range pipeline {
+		var cands []resurgo.FunctionCandidate
+		results[i], cands = run(allFuncsNoCRT, c.opts)
+		rows[i] = statsRow{c.label, results[i]}
+		if i == len(pipeline)-1 {
+			fullCandidates = cands
+		}
+	}
+
+	// Compute CRT-inclusive stats for the full pipeline run. Insert before
+	// the plt+cet+cfi (default) row so the default pipeline result is the last line.
+	var fullAll detectionStats
+	fullAll.total = len(allFuncs)
+	for _, c := range fullCandidates {
+		if _, ok := allFuncs[c.Address]; ok {
+			fullAll.truePositives++
+		} else {
+			fullAll.falsePositives++
+		}
+	}
+	last := rows[len(rows)-1]
+	rows[len(rows)-1] = statsRow{"plt+cet+cfi (with crt)", fullAll}
+	rows = append(rows, last)
+	logStatsTable(t, rows...)
+
+	// Each filter stage must reduce FP.
+	for i := 1; i < len(pipeline); i++ {
+		if results[i].falsePositives >= results[i-1].falsePositives {
+			t.Errorf("%s did not reduce FP vs %s: %d -> %d",
+				pipeline[i].label, pipeline[i-1].label,
+				results[i-1].falsePositives, results[i].falsePositives)
+		}
+	}
+
+	// Each pipeline step must reach at least 70% recall. Guards against
+	// disassembly regressions that FDE recovery would otherwise mask.
+	for i, r := range results {
+		if r.tpRate() < 70.0 {
+			t.Errorf("%s: recall %.1f%% < 70.0%%: regression?",
+				pipeline[i].label, r.tpRate())
+		}
+	}
+
+	// plt+cet+cfi (default) recall must be >= PLT-only (FDE recovers missed functions).
+	pltIdx, fullIdx := 1, len(pipeline)-1
+	if results[fullIdx].truePositives < results[pltIdx].truePositives {
+		t.Errorf("plt+cet+cfi (default) regressed recall vs plt: tp %d -> %d",
+			results[pltIdx].truePositives, results[fullIdx].truePositives)
+	}
+
+	// Log FP and missed details for the full pipeline run.
+	detectedVAs := make(map[uint64]struct{}, len(fullCandidates))
+	for _, c := range fullCandidates {
 		detectedVAs[c.Address] = struct{}{}
 	}
-
-	var stats, statsNoCRT detectionStats
-	stats.total = total
-	statsNoCRT.total = len(allFuncsNoCRT)
-	for _, c := range candidates {
-		if _, ok := allFuncs[c.Address]; ok {
-			stats.truePositives++
-			if _, ok2 := allFuncsNoCRT[c.Address]; ok2 {
-				statsNoCRT.truePositives++
-			}
-		} else {
-			stats.falsePositives++
-			statsNoCRT.falsePositives++
+	for _, c := range fullCandidates {
+		if _, ok := allFuncs[c.Address]; !ok {
 			t.Logf("false_positive: 0x%x  %s  %s",
 				c.Address, c.DetectionType, c.Confidence)
 		}
 	}
-
-	// Log missed functions; zero-size symbols are CRT stubs (no body, no FDE).
 	for va, sym := range allFuncs {
 		if _, found := detectedVAs[va]; found {
 			continue
@@ -668,17 +798,15 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_ARM64(t *testing.T) {
 		}
 	}
 
-	// At least 95% recall.
-	if stats.tpRate() < 95.0 {
-		t.Errorf("true positive rate %.1f%% < 95.0%%: regression?", stats.tpRate())
+	// At least 98% recall. Baseline (grep 3.11-4, arm64): 98.97%.
+	if fullAll.tpRate() < 98.0 {
+		t.Errorf("true positive rate %.1f%% < 98.0%%: regression?", fullAll.tpRate())
 	}
-
-	// FP multiplier must stay below 0.1x.
-	if stats.fpMultiplier() >= 0.1 {
-		t.Errorf("false positive multiplier %.2fx >= 0.10x: too noisy", stats.fpMultiplier())
+	// FP multiplier must stay below 0.01x. Baseline: 0.000x.
+	if fullAll.fpMultiplier() >= 0.01 {
+		t.Errorf("false positive multiplier %.3fx >= 0.010x: too noisy",
+			fullAll.fpMultiplier())
 	}
-
-	logStatsTable(t, stats, statsNoCRT)
 }
 
 // TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64 validates detection
@@ -705,7 +833,6 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64(t *testing.T) {
 		[]string{"-O2"},
 		"testdata/stripped-app.c", userFuncs,
 	)
-	stats.logSummary(t)
 
 	// report_str and report_arr are called multiple times from main
 	// and must reach high confidence on ARM64.
@@ -731,6 +858,5 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64(t *testing.T) {
 			stats.fpMultiplier())
 	}
 
-	t.Logf("snapshot: tp_rate=%.0f%% missed=%.0f%% fp_multiplier=%.2fx",
-		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
+	logStatsTable(t, statsRow{"result", stats})
 }
