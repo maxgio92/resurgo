@@ -1,15 +1,13 @@
 package resurgo
 
-// Arch represents a CPU architecture.
-type Arch string
-
-// PrologueType represents the type of function prologue.
-type PrologueType string
-
 const (
 	// Supported architectures.
 	ArchAMD64 Arch = "amd64"
 	ArchARM64 Arch = "arm64"
+
+	// DetectionPrologueOnly indicates the candidate was found by prologue
+	// pattern matching only.
+	DetectionPrologueOnly DetectionType = "prologue-only"
 
 	// Recognized x86_64 function prologue patterns.
 	PrologueClassic        PrologueType = "classic"
@@ -23,6 +21,12 @@ const (
 	PrologueSubSP         PrologueType = "sub-sp"
 	PrologueSTPOnly       PrologueType = "stp-only"
 )
+
+// Arch represents a CPU architecture.
+type Arch string
+
+// PrologueType represents the type of function prologue.
+type PrologueType string
 
 // Prologue represents a detected function prologue.
 type Prologue struct {

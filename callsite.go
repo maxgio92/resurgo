@@ -9,12 +9,6 @@ import (
 	"golang.org/x/arch/x86/x86asm"
 )
 
-// CallSiteType represents the type of call site instruction.
-type CallSiteType string
-
-// AddressingMode represents how the target address is specified.
-type AddressingMode string
-
 const (
 	// Recognized call site instruction types.
 	CallSiteCall CallSiteType = "call"
@@ -24,7 +18,25 @@ const (
 	AddressingModePCRelative       AddressingMode = "pc-relative"
 	AddressingModeAbsolute         AddressingMode = "absolute"
 	AddressingModeRegisterIndirect AddressingMode = "register-indirect"
+
+	// DetectionCallTarget indicates the candidate was found only as a target
+	// of one or more CALL instructions.
+	DetectionCallTarget DetectionType = "call-target"
+
+	// DetectionJumpTarget indicates the candidate was found only as a target
+	// of one or more JMP instructions.
+	DetectionJumpTarget DetectionType = "jump-target"
+
+	// DetectionPrologueCallSite indicates the candidate was confirmed by both
+	// prologue matching and call-site analysis.
+	DetectionPrologueCallSite DetectionType = "prologue-callsite"
 )
+
+// CallSiteType represents the type of call site instruction.
+type CallSiteType string
+
+// AddressingMode represents how the target address is specified.
+type AddressingMode string
 
 // CallSiteEdge represents a detected call site (call or jump to a function).
 type CallSiteEdge struct {

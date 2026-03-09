@@ -11,6 +11,24 @@ import (
 	"golang.org/x/arch/x86/x86asm"
 )
 
+const (
+	// Confidence levels ordered from highest to lowest reliability.
+	ConfidenceHigh   Confidence = "high"
+	ConfidenceMedium Confidence = "medium"
+	ConfidenceLow    Confidence = "low"
+	ConfidenceNone   Confidence = "none"
+
+	// endbr64Byte{0..3} are the four bytes of the ENDBR64 instruction
+	// (F3 0F 1E FA). ENDBR32 shares the first three bytes but ends with 0xFB.
+	// These CET indirect-branch-tracking prefixes appear at function entries
+	// on binaries compiled with -fcf-protection=branch.
+	endbr64Byte0 = byte(0xF3)
+	endbr64Byte1 = byte(0x0F)
+	endbr64Byte2 = byte(0x1E)
+	endbr64Byte3 = byte(0xFA)
+	endbr32Byte3 = byte(0xFB)
+)
+
 // Confidence represents the reliability level of a detected function candidate.
 type Confidence string
 
@@ -29,52 +47,6 @@ type FunctionCandidate struct {
 	JumpedFrom    []uint64      `json:"jumped_from,omitempty"`
 	Confidence    Confidence    `json:"confidence"`
 }
-
-const (
-	// Confidence levels ordered from highest to lowest reliability.
-	ConfidenceHigh   Confidence = "high"
-	ConfidenceMedium Confidence = "medium"
-	ConfidenceLow    Confidence = "low"
-	ConfidenceNone   Confidence = "none"
-
-	// DetectionPrologueOnly indicates the candidate was found by prologue
-	// pattern matching only.
-	DetectionPrologueOnly DetectionType = "prologue-only"
-
-	// DetectionCallTarget indicates the candidate was found only as a target
-	// of one or more CALL instructions.
-	DetectionCallTarget DetectionType = "call-target"
-
-	// DetectionJumpTarget indicates the candidate was found only as a target
-	// of one or more JMP instructions.
-	DetectionJumpTarget DetectionType = "jump-target"
-
-	// DetectionPrologueCallSite indicates the candidate was confirmed by both
-	// prologue matching and call-site analysis.
-	DetectionPrologueCallSite DetectionType = "prologue-callsite"
-
-	// DetectionAlignedEntry indicates the candidate was found by alignment-
-	// boundary analysis: a ret/jmp terminator followed by NOP padding ending
-	// at a 16-byte aligned address.
-	DetectionAlignedEntry DetectionType = "aligned-entry"
-
-	// DetectionCFI is assigned to function candidates whose entry address was
-	// read from DWARF Call Frame Information (CFI) rather than inferred by
-	// disassembly heuristics. On ELF binaries the CFI is stored in .eh_frame.
-	// These addresses are written by the compiler and are the highest-confidence
-	// source available on stripped binaries.
-	DetectionCFI DetectionType = "cfi"
-
-	// endbr64Byte{0..3} are the four bytes of the ENDBR64 instruction
-	// (F3 0F 1E FA). ENDBR32 shares the first three bytes but ends with 0xFB.
-	// These CET indirect-branch-tracking prefixes appear at function entries
-	// on binaries compiled with -fcf-protection=branch.
-	endbr64Byte0 = byte(0xF3)
-	endbr64Byte1 = byte(0x0F)
-	endbr64Byte2 = byte(0x1E)
-	endbr64Byte3 = byte(0xFA)
-	endbr32Byte3 = byte(0xFB)
-)
 
 // isENDBR reports whether the 4 bytes at code[i:i+4] encode an ENDBR64
 // (F3 0F 1E FA) or ENDBR32 (F3 0F 1E FB) instruction.
