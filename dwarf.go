@@ -24,10 +24,10 @@ const (
 	//
 	// Only the two encodings common on Linux x86-64 and ARM64 are handled.
 	// Any other encoding causes the FDE to be skipped silently.
-	ehPeAbsptr      = byte(0x00) // absolute, pointer-sized (4 or 8 bytes)
-	ehPeSdata4      = byte(0x0b) // signed 32-bit integer
-	ehPePcrel       = byte(0x10) // PC-relative: add field's own VA to value
-	ehPeOmit        = byte(0xff) // field is not present; skip FDE
+	ehPeAbsptr      = byte(0x00)             // absolute, pointer-sized (4 or 8 bytes)
+	ehPeSdata4      = byte(0x0b)             // signed 32-bit integer
+	ehPePcrel       = byte(0x10)             // PC-relative: add field's own VA to value
+	ehPeOmit        = byte(0xff)             // field is not present; skip FDE
 	ehPePcrelSdata4 = ehPePcrel | ehPeSdata4 // 0x1b — most common on Linux
 )
 

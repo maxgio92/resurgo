@@ -19,15 +19,15 @@ func TestDetectCallSitesAMD64_Call(t *testing.T) {
 	// nop                      = 0x90
 
 	tests := []struct {
-		name        string
-		code        []byte
-		baseAddr    uint64
-		wantCount   int
-		wantType    resurgo.CallSiteType
-		wantMode    resurgo.AddressingMode
-		wantConf    resurgo.Confidence
-		wantSource  uint64
-		wantTarget  uint64
+		name       string
+		code       []byte
+		baseAddr   uint64
+		wantCount  int
+		wantType   resurgo.CallSiteType
+		wantMode   resurgo.AddressingMode
+		wantConf   resurgo.Confidence
+		wantSource uint64
+		wantTarget uint64
 	}{
 		{
 			name: "pc-relative-call",
@@ -141,14 +141,14 @@ func TestDetectCallSitesAMD64_Jump(t *testing.T) {
 	// jmp rax                  = 0xFF 0xE0
 
 	tests := []struct {
-		name        string
-		code        []byte
-		baseAddr    uint64
-		wantCount   int
-		wantType    resurgo.CallSiteType
-		wantMode    resurgo.AddressingMode
-		wantConf    resurgo.Confidence
-		wantTarget  uint64
+		name       string
+		code       []byte
+		baseAddr   uint64
+		wantCount  int
+		wantType   resurgo.CallSiteType
+		wantMode   resurgo.AddressingMode
+		wantConf   resurgo.Confidence
+		wantTarget uint64
 	}{
 		{
 			name: "unconditional-jmp-rel32",
@@ -224,13 +224,13 @@ func TestDetectCallSitesARM64_BL(t *testing.T) {
 	// Offset is signed 26-bit immediate, multiplied by 4
 
 	tests := []struct {
-		name        string
-		code        []byte
-		baseAddr    uint64
-		wantCount   int
-		wantType    resurgo.CallSiteType
-		wantConf    resurgo.Confidence
-		wantTarget  uint64
+		name       string
+		code       []byte
+		baseAddr   uint64
+		wantCount  int
+		wantType   resurgo.CallSiteType
+		wantConf   resurgo.Confidence
+		wantTarget uint64
 	}{
 		{
 			name: "bl-forward",
@@ -709,4 +709,3 @@ func TestDetectCallSitesARM64_BConditional(t *testing.T) {
 		t.Errorf("expected low confidence for conditional branch, got %s", edge.Confidence)
 	}
 }
-

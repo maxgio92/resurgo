@@ -421,4 +421,3 @@ func DetectProloguesFromELF(r io.ReaderAt) ([]Prologue, error) {
 		return nil, fmt.Errorf("unsupported ELF machine: %s", f.Machine)
 	}
 }
-

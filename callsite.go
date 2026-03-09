@@ -41,11 +41,11 @@ const (
 
 // CallSiteEdge represents a detected call site (call or jump to a function).
 type CallSiteEdge struct {
-	SourceAddr  uint64          `json:"source_addr"`
-	TargetAddr  uint64          `json:"target_addr"`
-	Type        CallSiteType `json:"type"`
-	AddressMode AddressingMode  `json:"address_mode"`
-	Confidence  Confidence      `json:"confidence"`
+	SourceAddr  uint64         `json:"source_addr"`
+	TargetAddr  uint64         `json:"target_addr"`
+	Type        CallSiteType   `json:"type"`
+	AddressMode AddressingMode `json:"address_mode"`
+	Confidence  Confidence     `json:"confidence"`
 }
 
 // DetectionType represents how a function was detected.
@@ -53,9 +53,9 @@ type DetectionType string
 
 // Recognized detection types.
 const (
-	DetectionPrologueOnly DetectionType = "prologue-only"
-	DetectionCallTarget   DetectionType = "call-target"
-	DetectionJumpTarget   DetectionType = "jump-target"
+	DetectionPrologueOnly     DetectionType = "prologue-only"
+	DetectionCallTarget       DetectionType = "call-target"
+	DetectionJumpTarget       DetectionType = "jump-target"
 	DetectionPrologueCallSite DetectionType = "prologue-callsite" // Prologue + called/jumped to
 )
 
@@ -135,7 +135,6 @@ func DetectCallSitesFromELF(r io.ReaderAt) ([]CallSiteEdge, error) {
 
 	return filtered, nil
 }
-
 
 func detectCallSitesAMD64(code []byte, baseAddr uint64) ([]CallSiteEdge, error) {
 	var result []CallSiteEdge

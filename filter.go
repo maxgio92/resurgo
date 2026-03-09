@@ -115,4 +115,3 @@ func filterJumpTargetsByAnchorRange(candidates map[uint64]*FunctionCandidate) {
 		}
 	}
 }
-

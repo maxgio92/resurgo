@@ -22,10 +22,10 @@ const (
 
 // Recognized ARM64 function prologue patterns.
 const (
-	PrologueSTPFramePair PrologueType = "stp-frame-pair"
+	PrologueSTPFramePair  PrologueType = "stp-frame-pair"
 	PrologueSTRLRPreIndex PrologueType = "str-lr-preindex"
-	PrologueSubSP        PrologueType = "sub-sp"
-	PrologueSTPOnly      PrologueType = "stp-only"
+	PrologueSubSP         PrologueType = "sub-sp"
+	PrologueSTPOnly       PrologueType = "stp-only"
 )
 
 // Prologue represents a detected function prologue.
