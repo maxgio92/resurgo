@@ -9,13 +9,6 @@ import (
 )
 
 const (
-	// DetectionCFI is assigned to function candidates whose entry address was
-	// read from DWARF Call Frame Information (CFI) rather than inferred by
-	// disassembly heuristics. On ELF binaries the CFI is stored in .eh_frame.
-	// These addresses are written by the compiler and are the highest-confidence
-	// source available on stripped binaries.
-	DetectionCFI DetectionType = "cfi"
-
 	// .eh_frame FDE pointer-encoding constants (DW_EH_PE_*).
 	//
 	// The encoding byte is split into two nibbles:

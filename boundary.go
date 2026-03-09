@@ -10,11 +10,6 @@ const (
 	// default on x86-64 (-falign-functions=16).
 	alignedEntryAlignment = 16
 
-	// DetectionAlignedEntry indicates the candidate was found by alignment-
-	// boundary analysis: a ret/jmp terminator followed by NOP padding ending
-	// at a 16-byte aligned address.
-	DetectionAlignedEntry DetectionType = "aligned-entry"
-
 	// x86INT3 is the single-byte INT3 opcode (0xCC). Compilers emit it as
 	// inter-function padding on x86-64 when NOP fill is not used.
 	x86INT3 = byte(0xCC)

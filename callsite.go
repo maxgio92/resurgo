@@ -12,31 +12,18 @@ import (
 // CallSiteType represents the type of call site instruction.
 type CallSiteType string
 
-// Recognized call site instruction types.
-const (
-	CallSiteCall CallSiteType = "call"
-	CallSiteJump CallSiteType = "jump"
-)
-
 // AddressingMode represents how the target address is specified.
 type AddressingMode string
 
-// Recognized addressing modes for call site instructions.
 const (
+	// Recognized call site instruction types.
+	CallSiteCall CallSiteType = "call"
+	CallSiteJump CallSiteType = "jump"
+
+	// Recognized addressing modes for call site instructions.
 	AddressingModePCRelative       AddressingMode = "pc-relative"
 	AddressingModeAbsolute         AddressingMode = "absolute"
 	AddressingModeRegisterIndirect AddressingMode = "register-indirect"
-)
-
-// Confidence represents the reliability of a call site detection.
-type Confidence string
-
-// Confidence levels for call site detection.
-const (
-	ConfidenceHigh   Confidence = "high"
-	ConfidenceMedium Confidence = "medium"
-	ConfidenceLow    Confidence = "low"
-	ConfidenceNone   Confidence = "none"
 )
 
 // CallSiteEdge represents a detected call site (call or jump to a function).
@@ -46,28 +33,6 @@ type CallSiteEdge struct {
 	Type        CallSiteType   `json:"type"`
 	AddressMode AddressingMode `json:"address_mode"`
 	Confidence  Confidence     `json:"confidence"`
-}
-
-// DetectionType represents how a function was detected.
-type DetectionType string
-
-// Recognized detection types.
-const (
-	DetectionPrologueOnly     DetectionType = "prologue-only"
-	DetectionCallTarget       DetectionType = "call-target"
-	DetectionJumpTarget       DetectionType = "jump-target"
-	DetectionPrologueCallSite DetectionType = "prologue-callsite" // Prologue + called/jumped to
-)
-
-// FunctionCandidate represents a potential function detected through
-// one or more signals (prologue detection, call site analysis, or both).
-type FunctionCandidate struct {
-	Address       uint64        `json:"address"`
-	DetectionType DetectionType `json:"detection_type"`
-	PrologueType  PrologueType  `json:"prologue_type,omitempty"`
-	CalledFrom    []uint64      `json:"called_from,omitempty"`
-	JumpedFrom    []uint64      `json:"jumped_from,omitempty"`
-	Confidence    Confidence    `json:"confidence"`
 }
 
 // DetectCallSites analyzes raw machine code bytes and returns detected
