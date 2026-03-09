@@ -71,6 +71,23 @@ func (s detectionStats) logSummary(t *testing.T) {
 	}
 }
 
+// logStatsTable prints a compact two-row summary table comparing detection
+// metrics with and without zero-size CRT stubs in the ground truth.
+// all is the full ground truth view; noCRT excludes zero-size symbols.
+func logStatsTable(t *testing.T, all, noCRT detectionStats) {
+	t.Helper()
+	t.Logf("%-8s  %6s  %5s  %7s  %7s  %4s  %8s",
+		"", "total", "tp", "recall", "missed", "fp", "fp_mult")
+	t.Logf("%-8s  %6d  %5d  %6.0f%%  %7d  %4d  %7.2fx",
+		"all",
+		all.total, all.truePositives, all.tpRate(),
+		all.total-all.truePositives, all.falsePositives, all.fpMultiplier())
+	t.Logf("%-8s  %6d  %5d  %6.0f%%  %7d  %4d  %7.2fx",
+		"no_crt",
+		noCRT.total, noCRT.truePositives, noCRT.tpRate(),
+		noCRT.total-noCRT.truePositives, noCRT.falsePositives, noCRT.fpMultiplier())
+}
+
 // compileCBinary compiles src with compiler and cflags, writing the output to
 // out. Skips the test if compiler is not found in PATH.
 func compileCBinary(t *testing.T, compiler string, cflags []string, src, out string) {
@@ -130,12 +147,24 @@ func groundTruthVAs(t *testing.T, binPath string, wantNames []string) map[string
 	return result
 }
 
-// allFunctionVAs reads the ELF symbol table from binPath and returns the
-// virtual address of every STT_FUNC symbol, regardless of name. Used to
-// distinguish genuine false positives (addresses the detector reports that are
-// not real function entries) from CRT boilerplate that the detector correctly
-// finds but that are outside the user-defined recall target.
-func allFunctionVAs(t *testing.T, binPath string) map[uint64]struct{} {
+// withoutCRT returns a symbol filter that excludes zero-size STT_FUNC symbols
+// from the ground-truth set. CRT stubs (deregister_tm_clones, frame_dummy,
+// call_weak_fn, _init, _fini, etc.) are all zero-size in the debug file:
+// they have no real body and no .eh_frame FDE entries, so they cannot be
+// recovered by CFI-based detection on stripped binaries. Detecting them by
+// name would require maintaining a fragile allowlist; size == 0 is a
+// structural property detectable directly from the ELF.
+func withoutCRT() func(elf.Symbol) bool {
+	return func(s elf.Symbol) bool {
+		return s.Size > 0
+	}
+}
+
+// allFunctionVAs returns the set of STT_FUNC virtual addresses in binPath,
+// keyed by VA and valued by the full elf.Symbol. Symbols with VA=0 (undefined
+// imports) are excluded. Optional filters further narrow the set: a symbol is
+// included only when all filters return true.
+func allFunctionVAs(t *testing.T, binPath string, filters ...func(elf.Symbol) bool) map[uint64]elf.Symbol {
 	t.Helper()
 	f, err := elf.Open(binPath)
 	if err != nil {
@@ -148,10 +177,20 @@ func allFunctionVAs(t *testing.T, binPath string) map[uint64]struct{} {
 		t.Fatalf("f.Symbols: %v", err)
 	}
 
-	result := make(map[uint64]struct{})
+	result := make(map[uint64]elf.Symbol)
 	for _, sym := range syms {
-		if elf.ST_TYPE(sym.Info) == elf.STT_FUNC {
-			result[sym.Value] = struct{}{}
+		if elf.ST_TYPE(sym.Info) != elf.STT_FUNC || sym.Value == 0 {
+			continue
+		}
+		include := true
+		for _, filter := range filters {
+			if !filter(sym) {
+				include = false
+				break
+			}
+		}
+		if include {
+			result[sym.Value] = sym
 		}
 	}
 	return result
@@ -452,8 +491,9 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 		stats.tpRate(), stats.missedRate(), stats.fpMultiplier())
 }
 
-// TestDetectFunctionsFromELF_RealWorld_Grep validates detection on a real-world
-// AMD64 stripped binary: Debian grep 3.11-4 compiled with full gcc hardening.
+// TestDetectFunctionsFromELF_RealWorld_Grep_AMD64 validates detection on a
+// real-world AMD64 stripped binary: Debian grep 3.11-4 compiled with full gcc
+// hardening.
 //
 // Ground truth: all 333 STT_FUNC symbols from the matching grep-dbgsym debug
 // file (198 global + 134 local static functions, plus 1 GLIBC import).
@@ -470,7 +510,7 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 // renamed across versions).
 //
 // Skipped if /usr/bin/grep is not stripped or grep-dbgsym is not installed.
-func TestDetectFunctionsFromELF_RealWorld_Grep(t *testing.T) {
+func TestDetectFunctionsFromELF_RealWorld_Grep_AMD64(t *testing.T) {
 	const binPath = "/usr/bin/grep"
 
 	if !isStripped(t, binPath) {
@@ -482,8 +522,9 @@ func TestDetectFunctionsFromELF_RealWorld_Grep(t *testing.T) {
 		t.Skipf("grep-dbgsym not available: %v", err)
 	}
 
-	// Ground truth: every STT_FUNC symbol in the debug file.
+	// Ground truth: all STT_FUNC symbols, and a CRT-excluded variant.
 	allFuncs := allFunctionVAs(t, dbgPath)
+	allFuncsNoCRT := allFunctionVAs(t, dbgPath, withoutCRT())
 	total := len(allFuncs)
 	if total == 0 {
 		t.Fatal("no STT_FUNC symbols in debug file; ground truth is empty")
@@ -500,21 +541,39 @@ func TestDetectFunctionsFromELF_RealWorld_Grep(t *testing.T) {
 		t.Fatalf("DetectFunctionsFromELF: %v", err)
 	}
 
-	var stats detectionStats
+	detectedVAs := make(map[uint64]struct{}, len(candidates))
+	for _, c := range candidates {
+		detectedVAs[c.Address] = struct{}{}
+	}
+
+	var stats, statsNoCRT detectionStats
 	stats.total = total
+	statsNoCRT.total = len(allFuncsNoCRT)
 	for _, c := range candidates {
 		if _, ok := allFuncs[c.Address]; ok {
 			stats.truePositives++
+			if _, ok2 := allFuncsNoCRT[c.Address]; ok2 {
+				statsNoCRT.truePositives++
+			}
 		} else {
 			stats.falsePositives++
+			statsNoCRT.falsePositives++
+			t.Logf("false_positive: 0x%x  %s  %s",
+				c.Address, c.DetectionType, c.Confidence)
 		}
 	}
-	// Function names are not available from a stripped binary; log in the
-	// same format as logSummary but without the name list.
-	missed := stats.total - stats.truePositives
-	t.Logf("true_positives:   %d/%d (%.0f%%)", stats.truePositives, stats.total, stats.tpRate())
-	t.Logf("missed:           %d/%d (%.0f%%)", missed, stats.total, stats.missedRate())
-	t.Logf("false_positives:  %d (%.2fx per real function)", stats.falsePositives, stats.fpMultiplier())
+
+	// Log missed functions; zero-size symbols are CRT stubs (no body, no FDE).
+	for va, sym := range allFuncs {
+		if _, found := detectedVAs[va]; found {
+			continue
+		}
+		if sym.Size == 0 {
+			t.Logf("missed (crt):  0x%x  %s", va, sym.Name)
+		} else {
+			t.Logf("missed:        0x%x  %s", va, sym.Name)
+		}
+	}
 
 	// At least 95% recall. Baseline (grep 3.11-4, gcc 14.2.0): 98%.
 	if stats.tpRate() < 95.0 {
@@ -527,8 +586,99 @@ func TestDetectFunctionsFromELF_RealWorld_Grep(t *testing.T) {
 			stats.fpMultiplier())
 	}
 
-	t.Logf("snapshot: tp_rate=%.0f%% fp_multiplier=%.2fx",
-		stats.tpRate(), stats.fpMultiplier())
+	logStatsTable(t, stats, statsNoCRT)
+}
+
+// TestDetectFunctionsFromELF_RealWorld_Grep_ARM64 validates detection on a
+// real-world ARM64 stripped binary: the same Debian grep package built for
+// arm64.
+//
+// The binary is extracted from grep:arm64 to /opt/grep-arm64/usr/bin/grep to
+// avoid conflicting with grep:amd64 on /usr/bin/grep. Debug symbols are
+// resolved via the standard .build-id path after extracting grep-dbgsym:arm64
+// to /.
+//
+// Skipped if the binary or its debug file is not present (e.g. outside the
+// e2e Docker image or CI container).
+func TestDetectFunctionsFromELF_RealWorld_Grep_ARM64(t *testing.T) {
+	const binPath = "/opt/grep-arm64/usr/bin/grep"
+
+	if _, err := os.Stat(binPath); err != nil {
+		t.Skipf("ARM64 grep binary not installed at %s: %v", binPath, err)
+	}
+
+	if !isStripped(t, binPath) {
+		t.Skip("ARM64 grep binary is not stripped; test requires a stripped binary")
+	}
+
+	dbgPath, err := findDebugFile(t, binPath)
+	if err != nil {
+		t.Skipf("grep-dbgsym:arm64 not available: %v", err)
+	}
+
+	allFuncs := allFunctionVAs(t, dbgPath)
+	allFuncsNoCRT := allFunctionVAs(t, dbgPath, withoutCRT())
+	total := len(allFuncs)
+	if total == 0 {
+		t.Fatal("no STT_FUNC symbols in debug file; ground truth is empty")
+	}
+
+	f, err := os.Open(binPath)
+	if err != nil {
+		t.Fatalf("os.Open(%s): %v", binPath, err)
+	}
+	defer f.Close()
+
+	candidates, err := resurgo.DetectFunctionsFromELF(f)
+	if err != nil {
+		t.Fatalf("DetectFunctionsFromELF: %v", err)
+	}
+
+	detectedVAs := make(map[uint64]struct{}, len(candidates))
+	for _, c := range candidates {
+		detectedVAs[c.Address] = struct{}{}
+	}
+
+	var stats, statsNoCRT detectionStats
+	stats.total = total
+	statsNoCRT.total = len(allFuncsNoCRT)
+	for _, c := range candidates {
+		if _, ok := allFuncs[c.Address]; ok {
+			stats.truePositives++
+			if _, ok2 := allFuncsNoCRT[c.Address]; ok2 {
+				statsNoCRT.truePositives++
+			}
+		} else {
+			stats.falsePositives++
+			statsNoCRT.falsePositives++
+			t.Logf("false_positive: 0x%x  %s  %s",
+				c.Address, c.DetectionType, c.Confidence)
+		}
+	}
+
+	// Log missed functions; zero-size symbols are CRT stubs (no body, no FDE).
+	for va, sym := range allFuncs {
+		if _, found := detectedVAs[va]; found {
+			continue
+		}
+		if sym.Size == 0 {
+			t.Logf("missed (crt):  0x%x  %s", va, sym.Name)
+		} else {
+			t.Logf("missed:        0x%x  %s", va, sym.Name)
+		}
+	}
+
+	// At least 95% recall.
+	if stats.tpRate() < 95.0 {
+		t.Errorf("true positive rate %.1f%% < 95.0%%: regression?", stats.tpRate())
+	}
+
+	// FP multiplier must stay below 0.1x.
+	if stats.fpMultiplier() >= 0.1 {
+		t.Errorf("false positive multiplier %.2fx >= 0.10x: too noisy", stats.fpMultiplier())
+	}
+
+	logStatsTable(t, stats, statsNoCRT)
 }
 
 // TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64 validates detection

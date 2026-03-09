@@ -1,0 +1,25 @@
+FROM golang:1.25
+
+# Add the Debian debug symbols repository and enable the ARM64 foreign
+# architecture so that grep:arm64 and grep-dbgsym:arm64 can be fetched.
+#
+# grep:arm64 conflicts with grep:amd64 on /usr/bin/grep, so the ARM64
+# binary is extracted via dpkg-deb to /opt/grep-arm64. Debug symbols are
+# extracted to / so that the standard .build-id path resolution works.
+RUN echo 'deb http://deb.debian.org/debian-debug/ trixie-debug main' \
+      > /etc/apt/sources.list.d/debug.list \
+  && dpkg --add-architecture arm64 \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends \
+    gcc \
+    binutils \
+    gcc-aarch64-linux-gnu \
+    binutils-aarch64-linux-gnu \
+    libc6-dev-arm64-cross \
+    grep \
+    grep-dbgsym \
+  && apt-get download grep:arm64 grep-dbgsym:arm64 \
+  && dpkg-deb -x grep_*arm64*.deb /opt/grep-arm64 \
+  && dpkg-deb -x grep-dbgsym_*arm64*.deb / \
+  && rm -f grep_*arm64*.deb grep-dbgsym_*arm64*.deb \
+  && rm -rf /var/lib/apt/lists/*
