@@ -192,7 +192,17 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 // discard disassembly candidates that are not confirmed by the compiler, and
 // any function entries visible only in .eh_frame are added to the result.
 // The architecture is inferred from the ELF header.
-func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error) {
+//
+// By default the full filter pipeline (PLTFilter, CETFilter, EhFrameFilter)
+// is applied. Use WithFilters to override it.
+func DetectFunctionsFromELF(r io.ReaderAt, opts ...Option) ([]FunctionCandidate, error) {
+	o := &options{
+		filters: []CandidateFilter{PLTFilter, CETFilter, EhFrameFilter},
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+
 	f, err := elf.NewFile(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse ELF file: %w", err)
@@ -224,7 +234,7 @@ func DetectFunctionsFromELF(r io.ReaderAt) ([]FunctionCandidate, error) {
 		return nil, err
 	}
 
-	for _, filter := range elfFilters {
+	for _, filter := range o.filters {
 		candidates, err = filter(candidates, f)
 		if err != nil {
 			return nil, err

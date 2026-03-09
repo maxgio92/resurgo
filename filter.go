@@ -9,17 +9,23 @@ import (
 // Each filter reads only what it needs from f and returns the updated slice.
 type CandidateFilter func([]FunctionCandidate, *elf.File) ([]FunctionCandidate, error)
 
-// elfFilters is the ordered list of ELF-specific candidate filters applied by
-// DetectFunctionsFromELF after the disassembly pipeline. Each strategy
-// registers its filter here; order matters.
-var elfFilters = []CandidateFilter{
-	pltFilter,
-	cetFilter,
-	ehFrameFilter,
+// Option configures the behaviour of DetectFunctionsFromELF.
+type Option func(*options)
+
+type options struct {
+	filters []CandidateFilter
 }
 
-// pltFilter removes candidates that land inside linker-generated PLT sections.
-func pltFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
+// WithFilters sets the filter pipeline applied after disassembly. Filters run
+// in the order provided. Pass no arguments to disable all filters.
+func WithFilters(filters ...CandidateFilter) Option {
+	return func(o *options) {
+		o.filters = filters
+	}
+}
+
+// PLTFilter removes candidates that land inside linker-generated PLT sections.
+func PLTFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
 	var pltRanges [][2]uint64
 	for _, name := range []string{".plt", ".plt.got", ".plt.sec", ".iplt"} {
 		if sec := f.Section(name); sec != nil {
@@ -29,12 +35,12 @@ func pltFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error)
 	return filterCandidatesInRanges(cs, pltRanges), nil
 }
 
-// cetFilter applies the CET-aware ENDBR64 filter on AMD64 ELF binaries.
+// CETFilter applies the CET-aware ENDBR64 filter on AMD64 ELF binaries.
 // Non-AMD64 binaries are returned unchanged. The filter must run before
-// ehFrameFilter so that any aligned-entry candidate it drops can be recovered
+// EhFrameFilter so that any aligned-entry candidate it drops can be recovered
 // as DetectionCFI when its address appears in an FDE record (e.g. _start has
 // no ENDBR64 but does have an FDE entry).
-func cetFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
+func CETFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
 	if f.Machine != elf.EM_X86_64 {
 		return cs, nil
 	}
