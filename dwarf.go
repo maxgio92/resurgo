@@ -67,6 +67,7 @@ func applyEhFrame(candidates []FunctionCandidate, fdeVAs []uint64) []FunctionCan
 	filtered := candidates[:0]
 	for _, c := range candidates {
 		if _, ok := fdeSet[c.Address]; ok {
+			c.Confidence = ConfidenceHigh
 			filtered = append(filtered, c)
 		}
 	}
