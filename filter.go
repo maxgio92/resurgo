@@ -26,7 +26,7 @@ func PLTFilter(candidates []FunctionCandidate, f *elf.File) ([]FunctionCandidate
 			pltRanges = append(pltRanges, [2]uint64{sec.Addr, sec.Addr + sec.Size})
 		}
 	}
-	return filterCandidatesInRanges(candidates, pltRanges), nil
+	return FilterCandidatesInRanges(candidates, pltRanges), nil
 }
 
 // CETFilter filters candidates using the CET-aware ENDBR64 heuristic, reading
@@ -46,10 +46,10 @@ func CETFilter(candidates []FunctionCandidate, f *elf.File) ([]FunctionCandidate
 	if err != nil {
 		return nil, err
 	}
-	return filterAlignedEntriesCETAMD64(candidates, textBytes, textSec.Addr, f.Entry), nil
+	return FilterAlignedEntriesCETAMD64(candidates, textBytes, textSec.Addr, f.Entry), nil
 }
 
-// filterAlignedEntriesCETAMD64 drops aligned-entry candidates lacking ENDBR64
+// FilterAlignedEntriesCETAMD64 drops aligned-entry candidates lacking ENDBR64
 // on CET-enabled AMD64 binaries. On CET binaries every indirect-branch-target
 // function entry carries ENDBR64; an aligned address inside a function body
 // (reached by a jump or NOP padding) never does, making it a reliable
@@ -62,7 +62,7 @@ func CETFilter(candidates []FunctionCandidate, f *elf.File) ([]FunctionCandidate
 // avoids false triggering on non-CET binaries that may have a few incidental
 // ENDBR64 hits from CRT helpers. Non-CET binaries are returned unchanged.
 // Only DetectionAlignedEntry candidates are affected.
-func filterAlignedEntriesCETAMD64(candidates []FunctionCandidate, textBytes []byte, textVA, entryVA uint64) []FunctionCandidate {
+func FilterAlignedEntriesCETAMD64(candidates []FunctionCandidate, textBytes []byte, textVA, entryVA uint64) []FunctionCandidate {
 	hasENDBR64 := func(va uint64) bool {
 		if va < textVA {
 			return false
@@ -103,13 +103,13 @@ func filterAlignedEntriesCETAMD64(candidates []FunctionCandidate, textBytes []by
 	return result
 }
 
-// filterCandidatesInRanges removes candidates whose addresses fall within any
+// FilterCandidatesInRanges removes candidates whose addresses fall within any
 // of the given address ranges. Each range is a [lo, hi) pair.
 //
 // Used to discard candidates that land inside linker-generated sections (e.g.
 // PLT stubs) that the call-site scanner can detect as CALL/JMP targets even
 // though they are not real function entries in the binary under analysis.
-func filterCandidatesInRanges(candidates []FunctionCandidate, ranges [][2]uint64) []FunctionCandidate {
+func FilterCandidatesInRanges(candidates []FunctionCandidate, ranges [][2]uint64) []FunctionCandidate {
 	if len(ranges) == 0 {
 		return candidates
 	}
