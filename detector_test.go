@@ -1,7 +1,7 @@
 package resurgo_test
 
 import (
-	"bytes"
+	"debug/elf"
 	"encoding/binary"
 	"os"
 	"os/exec"
@@ -215,7 +215,16 @@ func TestDetectPrologues_UnsupportedArch(t *testing.T) {
 	}
 }
 
-func TestDetectProloguesFromELF_Go(t *testing.T) {
+// arm64Insn encodes ARM64 instructions as little-endian bytes.
+func arm64Insn(insns ...uint32) []byte {
+	buf := make([]byte, 4*len(insns))
+	for i, insn := range insns {
+		binary.LittleEndian.PutUint32(buf[i*4:], insn)
+	}
+	return buf
+}
+
+func TestDetectPrologues_Go(t *testing.T) {
 	tests := []struct {
 		name      string
 		goarch    string
@@ -269,13 +278,27 @@ func TestDetectProloguesFromELF_Go(t *testing.T) {
 				t.Fatalf("failed to compile demo-app: %v\n%s", err, out)
 			}
 
-			f, err := os.Open(binPath)
+			f, err := elf.Open(binPath)
 			if err != nil {
-				t.Fatalf("failed to open compiled binary: %v", err)
+				t.Fatalf("failed to open ELF: %v", err)
 			}
 			defer f.Close()
 
-			prologues, err := resurgo.DetectProloguesFromELF(f)
+			textSec := f.Section(".text")
+			if textSec == nil {
+				t.Fatal("no .text section")
+			}
+			code, err := textSec.Data()
+			if err != nil {
+				t.Fatalf("failed to read .text: %v", err)
+			}
+
+			arch := resurgo.ArchAMD64
+			if tt.goarch == "arm64" {
+				arch = resurgo.ArchARM64
+			}
+
+			prologues, err := resurgo.DetectPrologues(code, textSec.Addr, arch)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -298,7 +321,7 @@ func TestDetectProloguesFromELF_Go(t *testing.T) {
 	}
 }
 
-func TestDetectProloguesFromELF_C(t *testing.T) {
+func TestDetectPrologues_C(t *testing.T) {
 	const cSource = "testdata/demo-app.c"
 
 	tests := []struct {
@@ -344,27 +367,10 @@ func TestDetectProloguesFromELF_C(t *testing.T) {
 			if tt.name == "amd64/gcc/optimized" {
 				minCounts = gccOptimizedExpectations(t)
 			}
-			prologues := compileAndDetect(t, tt.compiler, tt.args, cSource)
+			prologues := compileAndDetectPrologues(t, tt.compiler, tt.args, cSource)
 			assertPrologues(t, prologues, minCounts)
 		})
 	}
-}
-
-func TestDetectProloguesFromELF_InvalidReader(t *testing.T) {
-	r := bytes.NewReader([]byte{0x00, 0x01, 0x02, 0x03})
-	_, err := resurgo.DetectProloguesFromELF(r)
-	if err == nil {
-		t.Fatal("expected error for invalid ELF data, got nil")
-	}
-}
-
-// arm64Insn encodes ARM64 instructions as little-endian bytes.
-func arm64Insn(insns ...uint32) []byte {
-	buf := make([]byte, 4*len(insns))
-	for i, insn := range insns {
-		binary.LittleEndian.PutUint32(buf[i*4:], insn)
-	}
-	return buf
 }
 
 // gccMajorVersion returns the major version of the GCC compiler at the given
@@ -384,24 +390,10 @@ func gccMajorVersion(compiler string) int {
 
 // gccOptimizedExpectations returns the expected prologue types for GCC -O2
 // output based on the installed GCC version.
-//
-// GCC version determines which prologue patterns are generated when frame
-// pointers are omitted (-O2 default):
-//
-//   - GCC >= 15: emits push rbp (callee-saved) followed by interleaved movs
-//     before sub rsp; the push rbp at the function boundary is detected as
-//     PushOnly.
-//   - GCC 13-14: emits endbr64 (CET) followed immediately by push rbx;
-//     sub rsp, which is detected as NoFramePointer after the ENDBR skip
-//     and relaxed boundary check.
 func gccOptimizedExpectations(t *testing.T) map[resurgo.PrologueType]int {
 	t.Helper()
 	v := gccMajorVersion("gcc")
 	switch {
-	case v >= 15:
-		return map[resurgo.PrologueType]int{
-			resurgo.ProloguePushOnly: 1,
-		}
 	case v >= 13:
 		return map[resurgo.PrologueType]int{
 			resurgo.ProloguePushOnly: 1,
@@ -412,9 +404,9 @@ func gccOptimizedExpectations(t *testing.T) map[resurgo.PrologueType]int {
 	}
 }
 
-// compileAndDetect compiles cSource with the given compiler and flags, runs
-// prologue detection on the result, and returns the detected prologues.
-func compileAndDetect(t *testing.T, compiler string, args []string, cSource string) []resurgo.Prologue {
+// compileAndDetectPrologues compiles cSource with the given compiler and flags,
+// extracts the .text section, and returns prologues detected on the raw bytes.
+func compileAndDetectPrologues(t *testing.T, compiler string, args []string, cSource string) []resurgo.Prologue {
 	t.Helper()
 	if _, err := exec.LookPath(compiler); err != nil {
 		t.Skipf("%s not found, skipping", compiler)
@@ -428,13 +420,27 @@ func compileAndDetect(t *testing.T, compiler string, args []string, cSource stri
 		t.Fatalf("failed to compile %s: %v\n%s", cSource, err, out)
 	}
 
-	f, err := os.Open(outPath)
+	f, err := elf.Open(outPath)
 	if err != nil {
-		t.Fatalf("failed to open compiled binary: %v", err)
+		t.Fatalf("failed to open ELF: %v", err)
 	}
 	defer f.Close()
 
-	prologues, err := resurgo.DetectProloguesFromELF(f)
+	textSec := f.Section(".text")
+	if textSec == nil {
+		t.Fatal("no .text section")
+	}
+	code, err := textSec.Data()
+	if err != nil {
+		t.Fatalf("failed to read .text: %v", err)
+	}
+
+	arch := resurgo.ArchAMD64
+	if f.Machine == elf.EM_AARCH64 {
+		arch = resurgo.ArchARM64
+	}
+
+	prologues, err := resurgo.DetectPrologues(code, textSec.Addr, arch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

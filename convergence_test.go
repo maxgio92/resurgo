@@ -31,55 +31,77 @@ func arm64BranchInsn(opBase uint32, source, target uint64) uint32 {
 	return opBase | imm26
 }
 
-// assertConvergence calls DetectFunctions, logs all candidates, and asserts
-// minimum convergence between prologue and call-site detection.
+// assertConvergence checks convergence between prologue and call-site detection
+// by running both independently and counting addresses found by both signals.
 // minTotal is the minimum number of candidates expected, minBoth the minimum
-// number of "prologue-callsite" candidates, and minRatio the minimum convergence ratio
-// (both / total).
+// number of addresses confirmed by both signals, and minRatio the minimum
+// convergence ratio (both / total).
 func assertConvergence(t *testing.T, code []byte, baseAddr uint64, arch resurgo.Arch, minTotal, minBoth int, minRatio float64) {
 	t.Helper()
 
-	candidates, err := resurgo.DetectFunctions(code, baseAddr, arch)
+	prologues, err := resurgo.DetectPrologues(code, baseAddr, arch)
 	if err != nil {
-		t.Fatalf("DetectFunctions: %v", err)
+		t.Fatalf("DetectPrologues: %v", err)
+	}
+	edges, err := resurgo.DetectCallSites(code, baseAddr, arch)
+	if err != nil {
+		t.Fatalf("DetectCallSites: %v", err)
 	}
 
-	counts := make(map[resurgo.DetectionType]int)
-	for _, c := range candidates {
-		counts[c.DetectionType]++
-		t.Logf("  0x%x: %-15s (prologue: %s, calls: %d, jumps: %d)",
-			c.Address, c.DetectionType, c.PrologueType,
-			len(c.CalledFrom), len(c.JumpedFrom))
+	prologueSet := make(map[uint64]resurgo.PrologueType, len(prologues))
+	for _, p := range prologues {
+		prologueSet[p.Address] = p.Type
+	}
+	callSet := make(map[uint64]struct{}, len(edges))
+	for _, e := range edges {
+		callSet[e.TargetAddr] = struct{}{}
 	}
 
-	total := len(candidates)
-	both := counts[resurgo.DetectionPrologueCallSite]
-	ratio := float64(both) / float64(total)
+	allAddrs := make(map[uint64]struct{})
+	for _, p := range prologues {
+		allAddrs[p.Address] = struct{}{}
+	}
+	for _, e := range edges {
+		allAddrs[e.TargetAddr] = struct{}{}
+	}
 
-	t.Logf("total=%d both=%d prologue-only=%d call-target=%d jump-target=%d ratio=%.3f",
-		total, both,
-		counts[resurgo.DetectionPrologueOnly],
-		counts[resurgo.DetectionCallTarget],
-		counts[resurgo.DetectionJumpTarget],
-		ratio)
+	var bothCount, prologueOnly, callTarget int
+	for addr := range allAddrs {
+		_, hasPrologue := prologueSet[addr]
+		_, hasCall := callSet[addr]
+		switch {
+		case hasPrologue && hasCall:
+			bothCount++
+			t.Logf("  0x%x: %-15s (prologue: %s)", addr, resurgo.DetectionPrologueCallSite, prologueSet[addr])
+		case hasPrologue:
+			prologueOnly++
+			t.Logf("  0x%x: %-15s (prologue: %s)", addr, resurgo.DetectionPrologueOnly, prologueSet[addr])
+		case hasCall:
+			callTarget++
+			t.Logf("  0x%x: %-15s", addr, resurgo.DetectionCallTarget)
+		}
+	}
+
+	total := len(allAddrs)
+	ratio := float64(bothCount) / float64(total)
+
+	t.Logf("total=%d both=%d prologue-only=%d call-target=%d ratio=%.3f",
+		total, bothCount, prologueOnly, callTarget, ratio)
 
 	if total < minTotal {
 		t.Errorf("expected >= %d candidates, got %d", minTotal, total)
 	}
-	if both < minBoth {
-		t.Errorf("expected >= %d 'both' candidates, got %d", minBoth, both)
+	if bothCount < minBoth {
+		t.Errorf("expected >= %d 'both' candidates, got %d", minBoth, bothCount)
 	}
 	if ratio < minRatio {
 		t.Errorf("convergence ratio %.3f < %.3f", ratio, minRatio)
 	}
-	if counts[resurgo.DetectionPrologueOnly] < 1 {
+	if prologueOnly < 1 {
 		t.Error("expected at least one prologue-only candidate")
 	}
-	if counts[resurgo.DetectionCallTarget] < 1 {
+	if callTarget < 1 {
 		t.Error("expected at least one call-target candidate")
-	}
-	if counts[resurgo.DetectionJumpTarget] < 1 {
-		t.Error("expected at least one jump-target candidate")
 	}
 }
 
@@ -295,7 +317,7 @@ func buildSyntheticARM64() (code []byte, baseAddr uint64) {
 	return code, base
 }
 
-func TestDetectFunctions_Convergence(t *testing.T) {
+func TestDetectFunctionsFromELF_Convergence(t *testing.T) {
 	// Call graph (both architectures):
 	//   main  → funcA, funcB, funcC    (calls)
 	//   funcA → funcD, funcE, funcI    (calls)

@@ -9,51 +9,44 @@ import (
 // Each filter reads only what it needs from f and returns the updated slice.
 type CandidateFilter func([]FunctionCandidate, *elf.File) ([]FunctionCandidate, error)
 
-// Option configures the behaviour of DetectFunctionsFromELF.
-type Option func(*options)
-
-type options struct {
-	filters []CandidateFilter
-}
-
-// WithFilters sets the filter pipeline applied after disassembly. filters run
-// in the order provided. Pass no arguments to disable all filters.
+// WithFilters replaces the default filter pipeline with the provided filters.
+// They run in the order provided. Pass no arguments to disable all filters.
 func WithFilters(filters ...CandidateFilter) Option {
 	return func(o *options) {
 		o.filters = filters
 	}
 }
 
-// PLTFilter removes candidates from cs that land inside linker-generated PLT
+// PLTFilter removes candidates that land inside linker-generated PLT
 // sections (.plt, .plt.got, .plt.sec, .iplt) as reported by f.
-func PLTFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
+func PLTFilter(candidates []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
 	var pltRanges [][2]uint64
 	for _, name := range []string{".plt", ".plt.got", ".plt.sec", ".iplt"} {
 		if sec := f.Section(name); sec != nil {
 			pltRanges = append(pltRanges, [2]uint64{sec.Addr, sec.Addr + sec.Size})
 		}
 	}
-	return filterCandidatesInRanges(cs, pltRanges), nil
+	return filterCandidatesInRanges(candidates, pltRanges), nil
 }
 
-// CETFilter filters cs using the CET-aware ENDBR64 heuristic, reading the
-// .text section from f. Non-AMD64 binaries are returned unchanged. The filter
-// must run before EhFrameFilter so that any aligned-entry candidate it drops
-// can be recovered as DetectionCFI when its address appears in an FDE record
-// (e.g. _start has no ENDBR64 but does have an FDE entry).
-func CETFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
+// CETFilter filters candidates using the CET-aware ENDBR64 heuristic, reading
+// the .text section from f. Non-AMD64 binaries are returned unchanged.
+// The ELF entry point is exempt from the ENDBR64 requirement: it is not an
+// indirect branch target and therefore never carries ENDBR64 even in CET
+// binaries (e.g. _start). The filter must run before EhFrameFilter.
+func CETFilter(candidates []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
 	if f.Machine != elf.EM_X86_64 {
-		return cs, nil
+		return candidates, nil
 	}
 	textSec := f.Section(".text")
 	if textSec == nil {
-		return cs, nil
+		return candidates, nil
 	}
 	textBytes, err := textSec.Data()
 	if err != nil {
 		return nil, err
 	}
-	return filterAlignedEntriesCETAMD64(cs, textBytes, textSec.Addr, f.Entry), nil
+	return filterAlignedEntriesCETAMD64(candidates, textBytes, textSec.Addr, f.Entry), nil
 }
 
 // filterAlignedEntriesCETAMD64 drops aligned-entry candidates lacking ENDBR64

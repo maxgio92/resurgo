@@ -180,19 +180,19 @@ Walking algorithm:
 
 ## Integration in `DetectFunctionsFromELF`
 
-`DetectFunctionsFromELF` runs an ordered list of `CandidateFilter` functions
-after the disassembly pipeline. The CFI filter is one entry in that list.
-When called it:
+CFI data is handled by two independent pipeline components:
 
-1. Calls `parseEhFrameEntries(f)` to get all FDE entry addresses.
-2. If the result is empty (`.eh_frame` absent): returns candidates unchanged.
-3. Drops disassembly candidates not confirmed by any FDE (FP elimination).
-4. Appends pure CFI hits: functions visible only in `.eh_frame`, not found
-   by any disassembly heuristic, emitted as `DetectionCFI` with high
-   confidence.
-5. Re-sorts the result by address.
+**`EhFrameDetector`** (detector phase) calls `parseEhFrameEntries(f)` and
+emits one `FunctionCandidate` per FDE address with `DetectionCFI` and
+`ConfidenceHigh`. If `.eh_frame` is absent it returns an empty slice; the
+pipeline falls back to disassembly-only results.
 
-PLT filtering still runs before this step.
+**`EhFrameFilter`** (filter phase) retains only candidates whose address
+appears in the FDE set, upgrading their confidence to `ConfidenceHigh`. It is
+a pure filter - it only removes candidates, never adds them.
+
+The two components are independent: callers can use `EhFrameDetector` alone
+via `WithDetectors`, or `EhFrameFilter` alone via `WithFilters`.
 
 ## Confidence and detection type
 
@@ -208,8 +208,9 @@ promoted or merged with the richer disassembly metadata.
   has FDE entries if the programmer adds `.cfi_*` directives.
 - **Aggressive stripping:** `strip -R .eh_frame` removes the section entirely.
   The fallback path handles this transparently.
-- **ELF-specific:** this strategy lives in `DetectFunctionsFromELF` only.
-  The format-agnostic `DetectFunctions` is not affected.
+- **ELF-specific:** this strategy is only available via `DetectFunctionsFromELF`
+  (or directly through `EhFrameDetector`/`EhFrameFilter`). The raw-bytes APIs
+  `DetectPrologues` and `DetectCallSites` are not affected.
 - **Inlined regions:** a single function can produce multiple FDEs if the
   compiler splits it into hot/cold regions. The current parser emits one
   candidate per FDE; deduplication by VA handles this correctly.

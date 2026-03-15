@@ -2,6 +2,7 @@ package resurgo_test
 
 import (
 	"bytes"
+	"debug/elf"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -347,178 +348,6 @@ func TestDetectCallSites_UnsupportedArch(t *testing.T) {
 	}
 }
 
-func TestDetectCallSitesFromELF_Go(t *testing.T) {
-	tests := []struct {
-		name     string
-		goarch   string
-		minCalls int
-	}{
-		{
-			name:     "amd64",
-			goarch:   "amd64",
-			minCalls: 1,
-		},
-		{
-			name:     "arm64",
-			goarch:   "arm64",
-			minCalls: 1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			binPath := filepath.Join(t.TempDir(), "demo-app")
-			args := []string{"build", "-o", binPath, "testdata/demo-app.go"}
-
-			cmd := exec.Command("go", args...)
-			cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOARCH="+tt.goarch)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("failed to compile demo-app: %v\n%s", err, out)
-			}
-
-			f, err := os.Open(binPath)
-			if err != nil {
-				t.Fatalf("failed to open compiled binary: %v", err)
-			}
-			defer f.Close()
-
-			edges, err := resurgo.DetectCallSitesFromELF(f)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if len(edges) == 0 {
-				t.Fatal("expected at least one call site edge, got none")
-			}
-
-			// Count by type
-			calls := 0
-			jumps := 0
-			for _, e := range edges {
-				if e.Type == resurgo.CallSiteCall {
-					calls++
-				} else if e.Type == resurgo.CallSiteJump {
-					jumps++
-				}
-			}
-			t.Logf("total edges: %d (calls: %d, jumps: %d)", len(edges), calls, jumps)
-
-			if calls < tt.minCalls {
-				t.Errorf("expected at least %d calls, got %d", tt.minCalls, calls)
-			}
-		})
-	}
-}
-
-func TestDetectCallSitesFromELF_InvalidReader(t *testing.T) {
-	r := bytes.NewReader([]byte{0x00, 0x01, 0x02, 0x03})
-	_, err := resurgo.DetectCallSitesFromELF(r)
-	if err == nil {
-		t.Fatal("expected error for invalid ELF data, got nil")
-	}
-}
-
-func TestDetectFunctions(t *testing.T) {
-	// Test combined prologue + call site detection
-	// Create code with:
-	// 1. A function with prologue that is also called
-	// 2. A function with prologue but not called
-	// 3. A called address without prologue
-
-	// AMD64 code:
-	// 0x00: push rbp (0x55)
-	// 0x01: mov rbp, rsp (0x48 0x89 0xe5)
-	// 0x04: call 0x20 (0xE8 0x17 0x00 0x00 0x00) - calls function at 0x20
-	// 0x09: ret (0xC3)
-	// 0x0A: padding
-	// ...
-	// 0x20: push rbp (0x55) - function with prologue, called from 0x04
-	// 0x21: mov rbp, rsp (0x48 0x89 0xe5)
-	// 0x24: ret (0xC3)
-	// 0x25: padding
-	// ...
-	// 0x30: push rbx (0x53) - function with prologue, not called
-	// 0x31: ret (0xC3)
-	// 0x32: padding
-	// ...
-	// 0x40: ret (0xC3) - called target without prologue
-
-	code := make([]byte, 0x50)
-	// Function at 0x00 with prologue
-	code[0x00] = 0x55 // push rbp
-	code[0x01] = 0x48 // mov rbp, rsp
-	code[0x02] = 0x89
-	code[0x03] = 0xe5
-	// Call to 0x20 (rel32 = 0x20 - (0x04 + 5) = 0x17)
-	code[0x04] = 0xE8 // call
-	code[0x05] = 0x17
-	code[0x06] = 0x00
-	code[0x07] = 0x00
-	code[0x08] = 0x00
-	code[0x09] = 0xC3 // ret
-
-	// Function at 0x20 with prologue, called
-	code[0x20] = 0x55 // push rbp
-	code[0x21] = 0x48 // mov rbp, rsp
-	code[0x22] = 0x89
-	code[0x23] = 0xe5
-	code[0x24] = 0xC3 // ret
-
-	// Add RET before function at 0x30 to establish function boundary
-	code[0x2F] = 0xC3 // ret
-
-	// Function at 0x30 with prologue, not called
-	code[0x30] = 0x53 // push rbx (callee-saved)
-	code[0x31] = 0xC3 // ret
-
-	// No code at 0x40 (would be called target without prologue in a real scenario)
-
-	candidates, err := resurgo.DetectFunctions(code, 0, resurgo.ArchAMD64)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Should find at least 3 candidates:
-	// - 0x00: prologue-only (main function, might not be called internally)
-	// - 0x20: both (prologue + called)
-	// - 0x30: prologue-only (not called)
-
-	if len(candidates) < 3 {
-		t.Fatalf("expected at least 3 candidates, got %d: %+v", len(candidates), candidates)
-	}
-
-	// Find candidate at 0x20 (should have both prologue and call target)
-	var candidate0x20 *resurgo.FunctionCandidate
-	for i := range candidates {
-		if candidates[i].Address == 0x20 {
-			candidate0x20 = &candidates[i]
-			break
-		}
-	}
-
-	if candidate0x20 == nil {
-		t.Fatal("expected candidate at address 0x20, got none")
-	}
-
-	if candidate0x20.DetectionType != resurgo.DetectionPrologueCallSite {
-		t.Errorf("expected detection type 'both', got %s", candidate0x20.DetectionType)
-	}
-
-	if candidate0x20.Confidence != resurgo.ConfidenceHigh {
-		t.Errorf("expected high confidence, got %s", candidate0x20.Confidence)
-	}
-
-	if len(candidate0x20.CalledFrom) == 0 {
-		t.Error("expected at least one caller, got none")
-	}
-
-	t.Logf("Found %d function candidates", len(candidates))
-	for _, c := range candidates {
-		t.Logf("  0x%x: %s (confidence: %s, called from: %d, jumped from: %d)",
-			c.Address, c.DetectionType, c.Confidence,
-			len(c.CalledFrom), len(c.JumpedFrom))
-	}
-}
-
 func TestDetectCallSitesAMD64_ENDBR(t *testing.T) {
 	// ENDBR64 (f3 0f 1e fa) followed by a call should detect the call,
 	// skipping the ENDBR64 instruction transparently.
@@ -582,24 +411,11 @@ func TestDetectCallSites_EmptyInput(t *testing.T) {
 	}
 }
 
-func TestDetectFunctions_UnsupportedArch(t *testing.T) {
-	_, err := resurgo.DetectFunctions([]byte{0x00}, 0, resurgo.Arch("mips"))
-	if err == nil {
-		t.Fatal("expected error for unsupported architecture, got nil")
-	}
-}
 
-func TestDetectFunctions_JumpTarget(t *testing.T) {
-	// Verify that unconditional JMPs create jump-target candidates
-	// (fix #2: medium-confidence edges now pass the filter).
-	//
-	// AMD64 code:
-	// 0x00: jmp 0x10 (E9 0B 00 00 00) - jump to 0x10
-	// 0x05: nop padding...
-	// 0x10: ret (C3) - jump target without prologue
-
+func TestDetectCallSites_JumpTarget(t *testing.T) {
+	// Verify that unconditional JMPs create jump-target candidates.
+	// jmp 0x10: E9 0B 00 00 00 at 0x00, target = 0x10
 	code := make([]byte, 0x20)
-	// jmp to 0x10: rel32 = 0x10 - (0x00 + 5) = 0x0B
 	code[0x00] = 0xE9
 	code[0x01] = 0x0B
 	code[0x02] = 0x00
@@ -607,30 +423,20 @@ func TestDetectFunctions_JumpTarget(t *testing.T) {
 	code[0x04] = 0x00
 	code[0x10] = 0xC3 // ret
 
-	candidates, err := resurgo.DetectFunctions(code, 0, resurgo.ArchAMD64)
+	edges, err := resurgo.DetectCallSites(code, 0, resurgo.ArchAMD64)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Look for a jump-target candidate at 0x10
-	var found *resurgo.FunctionCandidate
-	for i := range candidates {
-		if candidates[i].Address == 0x10 {
-			found = &candidates[i]
+	var found *resurgo.CallSiteEdge
+	for i := range edges {
+		if edges[i].TargetAddr == 0x10 {
+			found = &edges[i]
 			break
 		}
 	}
-
 	if found == nil {
-		t.Fatal("expected candidate at address 0x10, got none")
-	}
-
-	if found.DetectionType != resurgo.DetectionJumpTarget {
-		t.Errorf("expected detection type 'jump-target', got %s", found.DetectionType)
-	}
-
-	if len(found.JumpedFrom) == 0 {
-		t.Error("expected at least one JumpedFrom entry, got none")
+		t.Fatal("expected jump edge to 0x10, got none")
 	}
 }
 
@@ -644,9 +450,9 @@ func TestDetectFunctionsFromELF(t *testing.T) {
 		t.Fatalf("failed to compile demo-app: %v\n%s", err, out)
 	}
 
-	f, err := os.Open(binPath)
+	f, err := elf.Open(binPath)
 	if err != nil {
-		t.Fatalf("failed to open compiled binary: %v", err)
+		t.Fatalf("failed to open ELF binary: %v", err)
 	}
 	defer f.Close()
 
@@ -659,24 +465,75 @@ func TestDetectFunctionsFromELF(t *testing.T) {
 		t.Fatal("expected at least one function candidate, got none")
 	}
 
-	// Count by detection type
 	counts := make(map[resurgo.DetectionType]int)
 	for _, c := range candidates {
 		counts[c.DetectionType]++
 	}
 	t.Logf("total candidates: %d, by type: %v", len(candidates), counts)
 
-	// Should have both prologue-only and call-target candidates at minimum
 	if counts[resurgo.DetectionPrologueOnly] == 0 {
 		t.Error("expected at least one prologue-only candidate")
 	}
 }
 
-func TestDetectFunctionsFromELF_InvalidReader(t *testing.T) {
+// TestDisasmDetector verifies that DisasmDetector, when run against a real ELF
+// binary, produces candidates with the expected detection types and that
+// functions both called and matching a prologue pattern are promoted to
+// DetectionPrologueCallSite with ConfidenceHigh.
+func TestDisasmDetector(t *testing.T) {
+	binPath := filepath.Join(t.TempDir(), "demo-app")
+	cmd := exec.Command("go", "build", "-o", binPath, "testdata/demo-app.go")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOARCH=amd64")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to compile demo-app: %v\n%s", err, out)
+	}
+
+	f, err := elf.Open(binPath)
+	if err != nil {
+		t.Fatalf("failed to open ELF binary: %v", err)
+	}
+	defer f.Close()
+
+	candidates, err := resurgo.DisasmDetector(f)
+	if err != nil {
+		t.Fatalf("DisasmDetector: %v", err)
+	}
+
+	if len(candidates) == 0 {
+		t.Fatal("expected at least one candidate, got none")
+	}
+
+	counts := make(map[resurgo.DetectionType]int)
+	for _, c := range candidates {
+		counts[c.DetectionType]++
+	}
+	t.Logf("total candidates: %d, by type: %v", len(candidates), counts)
+
+	// Disasm must find functions via prologue pattern.
+	if counts[resurgo.DetectionPrologueOnly] == 0 && counts[resurgo.DetectionPrologueCallSite] == 0 {
+		t.Error("expected prologue-based candidates, got none")
+	}
+
+	// Functions confirmed by both prologue and call-site must be ConfidenceHigh
+	// and must carry at least one caller address.
+	for _, c := range candidates {
+		if c.DetectionType == resurgo.DetectionPrologueCallSite {
+			if c.Confidence != resurgo.ConfidenceHigh {
+				t.Errorf("0x%x: expected ConfidenceHigh for prologue-callsite, got %s", c.Address, c.Confidence)
+			}
+			if len(c.CalledFrom) == 0 && len(c.JumpedFrom) == 0 {
+				t.Errorf("0x%x: prologue-callsite candidate has no caller or jump source", c.Address)
+			}
+		}
+	}
+}
+
+func TestDetectFunctionsFromELF_InvalidELF(t *testing.T) {
 	r := bytes.NewReader([]byte{0x00, 0x01, 0x02, 0x03})
-	_, err := resurgo.DetectFunctionsFromELF(r)
+	f, err := elf.NewFile(r)
 	if err == nil {
-		t.Fatal("expected error for invalid ELF data, got nil")
+		f.Close()
+		t.Fatal("expected elf.NewFile to fail on invalid data")
 	}
 }
 
@@ -707,5 +564,67 @@ func TestDetectCallSitesARM64_BConditional(t *testing.T) {
 	}
 	if edge.Confidence != resurgo.ConfidenceLow {
 		t.Errorf("expected low confidence for conditional branch, got %s", edge.Confidence)
+	}
+}
+
+func TestDetectCallSites_Go(t *testing.T) {
+	tests := []struct {
+		name     string
+		goarch   string
+		minCalls int
+	}{
+		{name: "amd64", goarch: "amd64", minCalls: 1},
+		{name: "arm64", goarch: "arm64", minCalls: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binPath := filepath.Join(t.TempDir(), "demo-app")
+			cmd := exec.Command("go", "build", "-o", binPath, "testdata/demo-app.go")
+			cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOARCH="+tt.goarch)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("failed to compile demo-app: %v\n%s", err, out)
+			}
+
+			f, err := elf.Open(binPath)
+			if err != nil {
+				t.Fatalf("failed to open ELF: %v", err)
+			}
+			defer f.Close()
+
+			textSec := f.Section(".text")
+			if textSec == nil {
+				t.Fatal("no .text section")
+			}
+			code, err := textSec.Data()
+			if err != nil {
+				t.Fatalf("failed to read .text: %v", err)
+			}
+
+			arch := resurgo.ArchAMD64
+			if tt.goarch == "arm64" {
+				arch = resurgo.ArchARM64
+			}
+
+			edges, err := resurgo.DetectCallSites(code, textSec.Addr, arch)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(edges) == 0 {
+				t.Fatal("expected at least one call site edge, got none")
+			}
+
+			calls := 0
+			for _, e := range edges {
+				if e.Type == resurgo.CallSiteCall {
+					calls++
+				}
+			}
+			t.Logf("total edges: %d (calls: %d)", len(edges), calls)
+
+			if calls < tt.minCalls {
+				t.Errorf("expected at least %d calls, got %d", tt.minCalls, calls)
+			}
+		})
 	}
 }

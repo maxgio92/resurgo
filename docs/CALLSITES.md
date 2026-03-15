@@ -127,7 +127,7 @@ Confidence indicates the likelihood that a detected edge points to a function en
 
 ### Confidence Escalation
 
-When combined with prologue detection using `DetectFunctions()`:
+When combined with prologue detection via `DetectFunctionsFromELF()`:
 - Prologue + called -> **High confidence**
 - Prologue only -> **Medium confidence**
 - Called only -> **Medium confidence**
@@ -148,16 +148,25 @@ When combined with prologue detection using `DetectFunctions()`:
 
 ### 1. Use Combined Analysis
 
-For best results, use `DetectFunctions()` which merges both signals:
+For best results, use `DetectFunctionsFromELF()` which runs all detectors and filters:
 
 ```go
-candidates, err := resurgo.DetectFunctions(code, baseAddr, arch)
+f, err := elf.Open("./myapp")
+// ...
+candidates, err := resurgo.DetectFunctionsFromELF(f)
 ```
 
 This provides:
-- **Highest confidence** for functions detected by both methods
+- **Highest confidence** for functions detected by both disassembly and CFI
 - **Broader coverage** than either method alone
 - **Source tracking** (which addresses call each function)
+
+For raw bytes, combine the primitives manually:
+
+```go
+prologues, _ := resurgo.DetectPrologues(code, baseAddr, arch)
+edges, _ := resurgo.DetectCallSites(code, baseAddr, arch)
+```
 
 ### 2. Filter by Confidence
 
@@ -260,7 +269,8 @@ for _, e := range edges {
 ### Building a Call Graph
 
 ```go
-candidates, _ := resurgo.DetectFunctions(code, baseAddr, arch)
+f, _ := elf.Open("./myapp")
+candidates, _ := resurgo.DetectFunctionsFromELF(f)
 
 // Create adjacency list
 callGraph := make(map[uint64][]uint64)
@@ -274,7 +284,8 @@ for _, c := range candidates {
 ### Identifying Entry Points
 
 ```go
-candidates, _ := resurgo.DetectFunctions(code, baseAddr, arch)
+f, _ := elf.Open("./myapp")
+candidates, _ := resurgo.DetectFunctionsFromELF(f)
 
 // Functions never called (potential entry points)
 for _, c := range candidates {

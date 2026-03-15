@@ -1,9 +1,7 @@
 package resurgo
 
 import (
-	"debug/elf"
 	"fmt"
-	"io"
 
 	"golang.org/x/arch/arm64/arm64asm"
 	"golang.org/x/arch/x86/x86asm"
@@ -70,55 +68,6 @@ func DetectCallSites(code []byte, baseAddr uint64, arch Arch) ([]CallSiteEdge, e
 	}
 }
 
-// DetectCallSitesFromELF parses an ELF binary from the given reader, extracts
-// the .text section, and returns detected call sites.
-// The architecture is inferred from the ELF header.
-func DetectCallSitesFromELF(r io.ReaderAt) ([]CallSiteEdge, error) {
-	f, err := elf.NewFile(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse ELF file: %w", err)
-	}
-	defer f.Close()
-
-	textSec := f.Section(".text")
-	if textSec == nil {
-		return nil, fmt.Errorf("no .text section found")
-	}
-
-	code, err := textSec.Data()
-	if err != nil && err != io.EOF {
-		return nil, fmt.Errorf("failed to read .text section: %w", err)
-	}
-
-	var edges []CallSiteEdge
-	switch f.Machine {
-	case elf.EM_X86_64:
-		edges, err = detectCallSitesAMD64(code, textSec.Addr)
-	case elf.EM_AARCH64:
-		edges, err = detectCallSitesARM64(code, textSec.Addr)
-	default:
-		return nil, fmt.Errorf("unsupported ELF machine: %s", f.Machine)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Filter edges to only include targets within the .text section
-	filtered := make([]CallSiteEdge, 0, len(edges))
-	textStart := textSec.Addr
-	textEnd := textSec.Addr + textSec.Size
-	for _, edge := range edges {
-		// Only include edges with resolvable targets within .text
-		if edge.Confidence != ConfidenceNone &&
-			edge.TargetAddr >= textStart &&
-			edge.TargetAddr < textEnd {
-			filtered = append(filtered, edge)
-		}
-	}
-
-	return filtered, nil
-}
 
 func detectCallSitesAMD64(code []byte, baseAddr uint64) ([]CallSiteEdge, error) {
 	var result []CallSiteEdge

@@ -9,19 +9,14 @@
 //   - DWARF CFI-based: when the binary contains an .eh_frame section, the
 //     initial_location fields from its FDE records are used as an authoritative
 //     whitelist. These addresses were written by the compiler and survive
-//     making CFI the highest-confidence source available on stripped binaries.
+//     stripping, making CFI the highest-confidence source available.
 //
-// The primary entry point for most callers is [DetectFunctionsFromELF], which
-// accepts an [io.ReaderAt] (e.g. *os.File), infers the target architecture from
-// the ELF header, and returns a deduplicated, filtered slice of
-// [FunctionCandidate] values. Each candidate carries its virtual address,
-// detection type, and a confidence rating.
+// The primary entry point is [DetectFunctionsFromELF], which accepts a parsed
+// [*elf.File], runs all detectors and filters, and returns a deduplicated,
+// filtered slice of [FunctionCandidate] values.
 //
-// For format-agnostic use (non-ELF binaries, raw memory dumps) use
-// [DetectFunctions], which accepts raw machine code bytes and a base address.
-//
-// Lower-level APIs ([DetectPrologues], [DetectCallSites] and their FromELF
-// variants) are available when only a single signal is needed.
+// For format-agnostic use (non-ELF binaries, raw memory dumps) the lower-level
+// [DetectPrologues] and [DetectCallSites] APIs accept raw machine code bytes.
 //
 // Supported architectures: x86_64 (AMD64) and ARM64 (AArch64).
 package resurgo
