@@ -69,7 +69,7 @@ func TestFilterAlignedEntriesCETAMD64(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := filterAlignedEntriesCETAMD64(tt.input, tt.text, textVA)
+			got := filterAlignedEntriesCETAMD64(tt.input, tt.text, textVA, 0)
 			gotAddrs := addrs(got)
 			if len(gotAddrs) != len(tt.wantAddrs) {
 				t.Fatalf("len=%d want=%d: got %v want %v",

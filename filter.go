@@ -53,7 +53,7 @@ func CETFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error)
 	if err != nil {
 		return nil, err
 	}
-	return filterAlignedEntriesCETAMD64(cs, textBytes, textSec.Addr), nil
+	return filterAlignedEntriesCETAMD64(cs, textBytes, textSec.Addr, f.Entry), nil
 }
 
 // filterAlignedEntriesCETAMD64 drops aligned-entry candidates lacking ENDBR64
@@ -62,11 +62,14 @@ func CETFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error)
 // (reached by a jump or NOP padding) never does, making it a reliable
 // discriminator for aligned-entry false positives.
 //
+// The ELF entry point (e.g. _start) is exempt: it is not an indirect branch
+// target and therefore never carries ENDBR64 even in CET binaries.
+//
 // CET is detected when >= 5 aligned-entry candidates carry ENDBR64; this
 // avoids false triggering on non-CET binaries that may have a few incidental
 // ENDBR64 hits from CRT helpers. Non-CET binaries are returned unchanged.
 // Only DetectionAlignedEntry candidates are affected.
-func filterAlignedEntriesCETAMD64(candidates []FunctionCandidate, textBytes []byte, textVA uint64) []FunctionCandidate {
+func filterAlignedEntriesCETAMD64(candidates []FunctionCandidate, textBytes []byte, textVA, entryVA uint64) []FunctionCandidate {
 	hasENDBR64 := func(va uint64) bool {
 		if va < textVA {
 			return false
@@ -95,10 +98,11 @@ func filterAlignedEntriesCETAMD64(candidates []FunctionCandidate, textBytes []by
 	}
 
 	// CET binary: keep only aligned-entry candidates that have ENDBR64.
+	// The ELF entry point is exempt: it is not an indirect branch target.
 	// All other detection types are kept unconditionally.
 	result := candidates[:0]
 	for _, c := range candidates {
-		if c.DetectionType == DetectionAlignedEntry && !hasENDBR64(c.Address) {
+		if c.DetectionType == DetectionAlignedEntry && !hasENDBR64(c.Address) && c.Address != entryVA {
 			continue
 		}
 		result = append(result, c)
