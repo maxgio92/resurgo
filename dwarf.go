@@ -1,11 +1,9 @@
 package resurgo
 
 import (
-	"cmp"
 	"debug/elf"
 	"encoding/binary"
 	"fmt"
-	"slices"
 )
 
 const (
@@ -37,25 +35,36 @@ type cieInfo struct {
 	fdeEncoding byte // DW_EH_PE_* byte from 'R' augmentation datum
 }
 
-// EhFrameFilter parses .eh_frame from f and applies the FDE whitelist to cs.
-// See applyEhFrame for the merge logic.
-func EhFrameFilter(cs []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
+// EhFrameDetector is a CandidateDetector that emits function candidates
+// sourced from .eh_frame FDE records. Each candidate carries DetectionCFI
+// and ConfidenceHigh. Returns an empty slice (no error) when .eh_frame is
+// absent; the caller falls back to disassembly-only results.
+func EhFrameDetector(f *elf.File) ([]FunctionCandidate, error) {
 	fdeVAs, err := parseEhFrameEntries(f)
 	if err != nil {
 		return nil, fmt.Errorf("parse .eh_frame: %w", err)
 	}
-	return applyEhFrame(cs, fdeVAs), nil
+	candidates := make([]FunctionCandidate, 0, len(fdeVAs))
+	for _, va := range fdeVAs {
+		candidates = append(candidates, FunctionCandidate{
+			Address:       va,
+			DetectionType: DetectionCFI,
+			Confidence:    ConfidenceHigh,
+		})
+	}
+	return candidates, nil
 }
 
-// applyEhFrame applies .eh_frame FDE data to the candidate slice.
-// When fdeVAs is empty it returns candidates unchanged (fallback for binaries
-// without .eh_frame). Otherwise it:
-//   - drops candidates whose address is not confirmed by any FDE
-//   - appends pure FDE hits (functions invisible to disassembly heuristics)
-//   - re-sorts the result by address
-func applyEhFrame(candidates []FunctionCandidate, fdeVAs []uint64) []FunctionCandidate {
+// EhFrameFilter retains only candidates whose address is confirmed by an FDE
+// record in .eh_frame, upgrading their confidence to ConfidenceHigh.
+// When .eh_frame is absent the slice is returned unchanged.
+func EhFrameFilter(candidates []FunctionCandidate, f *elf.File) ([]FunctionCandidate, error) {
+	fdeVAs, err := parseEhFrameEntries(f)
+	if err != nil {
+		return nil, fmt.Errorf("parse .eh_frame: %w", err)
+	}
 	if len(fdeVAs) == 0 {
-		return candidates
+		return candidates, nil
 	}
 
 	fdeSet := make(map[uint64]struct{}, len(fdeVAs))
@@ -71,27 +80,7 @@ func applyEhFrame(candidates []FunctionCandidate, fdeVAs []uint64) []FunctionCan
 			filtered = append(filtered, c)
 		}
 	}
-	candidates = filtered
-
-	// Append FDE-only hits not already found by disassembly.
-	disasmSet := make(map[uint64]struct{}, len(candidates))
-	for _, c := range candidates {
-		disasmSet[c.Address] = struct{}{}
-	}
-	for _, va := range fdeVAs {
-		if _, ok := disasmSet[va]; !ok {
-			candidates = append(candidates, FunctionCandidate{
-				Address:       va,
-				DetectionType: DetectionCFI,
-				Confidence:    ConfidenceHigh,
-			})
-		}
-	}
-
-	slices.SortFunc(candidates, func(a, b FunctionCandidate) int {
-		return cmp.Compare(a.Address, b.Address)
-	})
-	return candidates
+	return filtered, nil
 }
 
 // parseEhFrameEntries parses the .eh_frame section of f and returns the

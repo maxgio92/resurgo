@@ -264,7 +264,7 @@ func measure(
 		t.Fatalf("ground truth missing functions: %v", missing)
 	}
 
-	f, err := os.Open(stripped)
+	f, err := elf.Open(stripped)
 	if err != nil {
 		t.Fatalf("os.Open: %v", err)
 	}
@@ -321,14 +321,14 @@ func measure(
 	return byVA, truth, stats
 }
 
-// TestDetectFunctionsFromELF_StrippedC_Unoptimized verifies that
+// TestDetectFunctions_StrippedC_Unoptimized verifies that
 // DetectFunctionsFromELF finds all user-defined functions in a stripped C
 // binary compiled without optimisation.
 //
 // Source: testdata/stripped-app.c - the same 16-function realistic fixture
 // used by the optimized tests. At -O0 -fno-inline all 16 functions survive
 // as distinct symbols; 100% recall is required.
-func TestDetectFunctionsFromELF_StrippedC_Unoptimized(t *testing.T) {
+func TestDetectFunctions_StrippedC_Unoptimized(t *testing.T) {
 	userFuncs := []string{
 		"word_count", "longest_word", "vowel_count", "char_count",
 		"is_printable", "checksum",
@@ -369,7 +369,7 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized(t *testing.T) {
 	logStatsTable(t, statsRow{"result", stats})
 }
 
-// TestDetectFunctionsFromELF_StrippedC_Unoptimized_ARM64 verifies that
+// TestDetectFunctions_StrippedC_Unoptimized_ARM64 verifies that
 // DetectFunctionsFromELF finds all user-defined functions in a
 // cross-compiled ARM64 stripped binary compiled without optimisation.
 //
@@ -378,7 +378,7 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized(t *testing.T) {
 // boundaries without prologues, so 100% recall is expected.
 //
 // Skipped if aarch64-linux-gnu-gcc or aarch64-linux-gnu-strip are not in PATH.
-func TestDetectFunctionsFromELF_StrippedC_Unoptimized_ARM64(t *testing.T) {
+func TestDetectFunctions_StrippedC_Unoptimized_ARM64(t *testing.T) {
 	userFuncs := []string{
 		"word_count", "longest_word", "vowel_count", "char_count",
 		"is_printable", "checksum",
@@ -419,7 +419,7 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized_ARM64(t *testing.T) {
 	logStatsTable(t, statsRow{"result", stats})
 }
 
-// TestDetectFunctionsFromELF_StrippedC_Optimized validates that
+// TestDetectFunctions_StrippedC_Optimized validates that
 // DetectFunctionsFromELF correctly identifies all user functions in a
 // stripped C binary compiled at -O2.
 //
@@ -427,7 +427,7 @@ func TestDetectFunctionsFromELF_StrippedC_Unoptimized_ARM64(t *testing.T) {
 // functions covering a range of shapes: loop-heavy leaves, multi-caller
 // aggregators, a nested-loop sort, and two recursive functions (fib, gcd).
 // gcc -O2 preserves all 16 as distinct symbols on AMD64.
-func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
+func TestDetectFunctions_StrippedC_Optimized(t *testing.T) {
 	userFuncs := []string{
 		"word_count", "longest_word", "vowel_count", "char_count",
 		"is_printable", "checksum",
@@ -467,7 +467,7 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 	logStatsTable(t, statsRow{"result", stats})
 }
 
-// TestDetectFunctionsFromELF_RealWorld_Grep_AMD64 validates detection on a
+// TestDetectFunctions_RealWorld_Grep_AMD64 validates detection on a
 // real-world AMD64 stripped binary: Debian grep 3.11-4 compiled with full
 // gcc hardening.
 //
@@ -490,7 +490,7 @@ func TestDetectFunctionsFromELF_StrippedC_Optimized(t *testing.T) {
 
 //
 // Skipped if /usr/bin/grep is not stripped or grep-dbgsym is not installed.
-func TestDetectFunctionsFromELF_RealWorld_Grep_AMD64(t *testing.T) {
+func TestDetectFunctions_RealWorld_Grep_AMD64(t *testing.T) {
 	const binPath = "/usr/bin/grep"
 
 	if !isStripped(t, binPath) {
@@ -518,7 +518,7 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_AMD64(t *testing.T) {
 		}
 	}
 
-	f, err := os.Open(binPath)
+	f, err := elf.Open(binPath)
 	if err != nil {
 		t.Fatalf("os.Open(%s): %v", binPath, err)
 	}
@@ -640,7 +640,7 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_AMD64(t *testing.T) {
 	}
 }
 
-// TestDetectFunctionsFromELF_RealWorld_Grep_ARM64 validates detection on a
+// TestDetectFunctions_RealWorld_Grep_ARM64 validates detection on a
 // real-world ARM64 stripped binary: the same Debian grep package built for
 // arm64.
 //
@@ -656,7 +656,7 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_AMD64(t *testing.T) {
 //
 // Skipped if the binary or its debug file is not present (e.g. outside the
 // e2e Docker image or CI container).
-func TestDetectFunctionsFromELF_RealWorld_Grep_ARM64(t *testing.T) {
+func TestDetectFunctions_RealWorld_Grep_ARM64(t *testing.T) {
 	const binPath = "/opt/grep-arm64/usr/bin/grep"
 
 	if _, err := os.Stat(binPath); err != nil {
@@ -688,7 +688,7 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_ARM64(t *testing.T) {
 		}
 	}
 
-	f, err := os.Open(binPath)
+	f, err := elf.Open(binPath)
 	if err != nil {
 		t.Fatalf("os.Open(%s): %v", binPath, err)
 	}
@@ -809,7 +809,7 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_ARM64(t *testing.T) {
 	}
 }
 
-// TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64 validates detection
+// TestDetectFunctions_StrippedC_Optimized_ARM64 validates detection
 // on a cross-compiled ARM64 optimized stripped binary.
 //
 // The test cross-compiles testdata/stripped-app.c with aarch64-linux-gnu-gcc
@@ -819,7 +819,7 @@ func TestDetectFunctionsFromELF_RealWorld_Grep_ARM64(t *testing.T) {
 // is now expected.
 //
 // Skipped if aarch64-linux-gnu-gcc or aarch64-linux-gnu-strip are not in PATH.
-func TestDetectFunctionsFromELF_StrippedC_Optimized_ARM64(t *testing.T) {
+func TestDetectFunctions_StrippedC_Optimized_ARM64(t *testing.T) {
 	userFuncs := []string{
 		"word_count", "longest_word", "vowel_count", "char_count",
 		"is_printable", "checksum",

@@ -62,30 +62,96 @@ type FunctionCandidate struct {
 	Confidence Confidence `json:"confidence"`
 }
 
-// isENDBR reports whether the 4 bytes at code[i:i+4] encode an ENDBR64
-// (F3 0F 1E FA) or ENDBR32 (F3 0F 1E FB) instruction.
-// golang.org/x/arch/x86/x86asm does not recognise these CET instructions,
-// so callers must skip them explicitly before invoking the decoder.
-func isENDBR(code []byte, i int) bool {
-	return i+4 <= len(code) &&
-		code[i] == endbr64Byte0 &&
-		code[i+1] == endbr64Byte1 &&
-		code[i+2] == endbr64Byte2 &&
-		(code[i+3] == endbr64Byte3 || code[i+3] == endbr32Byte3)
+// CandidateDetector reads an ELF file and emits function candidates.
+// Detectors run before filters; their results are merged with those of other
+// detectors (deduplicated by address) before the filter pipeline is applied.
+type CandidateDetector func(*elf.File) ([]FunctionCandidate, error)
+
+// Option configures the behaviour of DetectFunctionsFromELF.
+type Option func(*options)
+
+type options struct {
+	detectors []CandidateDetector
+	filters   []CandidateFilter
 }
 
-// DetectFunctions combines prologue detection, call site analysis, and
-// alignment-based boundary detection to identify function entry points.
-// Functions detected by multiple methods receive higher confidence ratings.
-func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandidate, error) {
+// WithDetectors replaces the default detector pipeline with the provided
+// detectors. They run in the order provided and their results are merged
+// before filtering. Pass no arguments to disable all detectors.
+func WithDetectors(detectors ...CandidateDetector) Option {
+	return func(o *options) {
+		o.detectors = detectors
+	}
+}
+
+// DetectFunctionsFromELF returns detected function candidates from f by running all
+// detectors then all filters in order.
+//
+// By default the detector pipeline is [DisasmDetector, EhFrameDetector] and
+// the filter pipeline is [CETFilter, EhFrameFilter, PLTFilter].
+// opts may include WithDetectors or WithFilters to replace either pipeline.
+func DetectFunctionsFromELF(f *elf.File, opts ...Option) ([]FunctionCandidate, error) {
+	o := &options{
+		detectors: []CandidateDetector{DisasmDetector, EhFrameDetector},
+		filters:   []CandidateFilter{CETFilter, EhFrameFilter, PLTFilter},
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	var candidates []FunctionCandidate
+	for _, detect := range o.detectors {
+		candidate, err := detect(f)
+		if err != nil {
+			return nil, err
+		}
+		candidates = mergeCandidates(candidates, candidate)
+	}
+
+	var err error
+	for _, filter := range o.filters {
+		candidates, err = filter(candidates, f)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return candidates, nil
+}
+
+// DisasmDetector is a CandidateDetector that runs the disassembly-based
+// pipeline (prologue matching, call-site analysis, alignment-based boundary
+// detection) against the .text section of f.
+// The architecture is inferred from the ELF header.
+func DisasmDetector(f *elf.File) ([]FunctionCandidate, error) {
+	textSec := f.Section(".text")
+	if textSec == nil {
+		return nil, fmt.Errorf("no .text section found")
+	}
+
+	code, err := textSec.Data()
+	if err != nil && err != io.EOF {
+		return nil, fmt.Errorf("failed to read .text section: %w", err)
+	}
+
+	var arch Arch
+	switch f.Machine {
+	case elf.EM_X86_64:
+		arch = ArchAMD64
+	case elf.EM_AARCH64:
+		arch = ArchARM64
+	default:
+		return nil, fmt.Errorf("unsupported ELF machine: %s", f.Machine)
+	}
+
 	// Detect prologues
-	prologues, err := DetectPrologues(code, baseAddr, arch)
+	prologues, err := DetectPrologues(code, textSec.Addr, arch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect prologues: %w", err)
 	}
 
 	// Detect call sites
-	edges, err := DetectCallSites(code, baseAddr, arch)
+	edges, err := DetectCallSites(code, textSec.Addr, arch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect call sites: %w", err)
 	}
@@ -109,9 +175,7 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 		if edge.Confidence != ConfidenceHigh && edge.Confidence != ConfidenceMedium {
 			continue
 		}
-
-		candidate, exists := candidates[edge.TargetAddr]
-		if exists {
+		if candidate, exists := candidates[edge.TargetAddr]; exists {
 			// Address has both prologue and is called/jumped to - highest confidence
 			candidate.DetectionType = DetectionPrologueCallSite
 			candidate.Confidence = ConfidenceHigh
@@ -126,7 +190,6 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 			if edge.Type == CallSiteJump {
 				detType = DetectionJumpTarget
 			}
-
 			calledFrom := []uint64{}
 			jumpedFrom := []uint64{}
 			if edge.Type == CallSiteCall {
@@ -134,7 +197,6 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 			} else {
 				jumpedFrom = []uint64{edge.SourceAddr}
 			}
-
 			candidates[edge.TargetAddr] = &FunctionCandidate{
 				Address:       edge.TargetAddr,
 				DetectionType: detType,
@@ -149,15 +211,15 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 	// no call-site signal (e.g. pure-leaf functions with external linkage
 	// that were never called due to inlining or compile-time evaluation).
 	//
-	// These receive ConfidenceLow because the pattern (ret + NOP padding →
+	// These receive ConfidenceLow because the pattern (ret + NOP padding ->
 	// 16-byte aligned address) is reliable for function separators but can
 	// also match intra-function alignment at loop heads.
 	var alignedEntries []uint64
 	switch arch {
 	case ArchAMD64:
-		alignedEntries = detectAlignedEntriesAMD64(code, baseAddr)
+		alignedEntries = detectAlignedEntriesAMD64(code, textSec.Addr)
 	case ArchARM64:
-		alignedEntries = detectAlignedEntriesARM64(code, baseAddr)
+		alignedEntries = detectAlignedEntriesARM64(code, textSec.Addr)
 	}
 	for _, addr := range alignedEntries {
 		if _, exists := candidates[addr]; !exists {
@@ -176,72 +238,10 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 	for _, candidate := range candidates {
 		result = append(result, *candidate)
 	}
-
 	slices.SortFunc(result, func(a, b FunctionCandidate) int {
 		return cmp.Compare(a.Address, b.Address)
 	})
-
 	return result, nil
-}
-
-// DetectFunctionsFromELF parses an ELF binary from the given reader, extracts
-// the .text section, and returns detected function candidates using combined
-// prologue detection, call site analysis, and alignment-based boundary
-// detection, followed by FP filters (PLT section ranges, intra-function jump
-// targets). When .eh_frame is present, FDE entries are used as a whitelist to
-// discard disassembly candidates that are not confirmed by the compiler, and
-// any function entries visible only in .eh_frame are added to the result.
-// The architecture is inferred from the ELF header.
-//
-// By default the full filter pipeline (PLTFilter, CETFilter, EhFrameFilter)
-// is applied. opts may include WithFilters to replace the default pipeline.
-func DetectFunctionsFromELF(r io.ReaderAt, opts ...Option) ([]FunctionCandidate, error) {
-	o := &options{
-		filters: []CandidateFilter{PLTFilter, CETFilter, EhFrameFilter},
-	}
-	for _, opt := range opts {
-		opt(o)
-	}
-
-	f, err := elf.NewFile(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse ELF file: %w", err)
-	}
-	defer f.Close()
-
-	textSec := f.Section(".text")
-	if textSec == nil {
-		return nil, fmt.Errorf("no .text section found")
-	}
-
-	code, err := textSec.Data()
-	if err != nil && err != io.EOF {
-		return nil, fmt.Errorf("failed to read .text section: %w", err)
-	}
-
-	var arch Arch
-	switch f.Machine {
-	case elf.EM_X86_64:
-		arch = ArchAMD64
-	case elf.EM_AARCH64:
-		arch = ArchARM64
-	default:
-		return nil, fmt.Errorf("unsupported ELF machine: %s", f.Machine)
-	}
-
-	candidates, err := DetectFunctions(code, textSec.Addr, arch)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, filter := range o.filters {
-		candidates, err = filter(candidates, f)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return candidates, nil
 }
 
 // DetectPrologues analyzes raw machine code bytes and returns detected function
@@ -257,6 +257,37 @@ func DetectPrologues(code []byte, baseAddr uint64, arch Arch) ([]Prologue, error
 	default:
 		return nil, fmt.Errorf("unsupported architecture: %s", arch)
 	}
+}
+
+// mergeCandidates merges two candidate slices, deduplicating by address.
+// When the same address appears in both, the entry from a takes precedence.
+func mergeCandidates(a, b []FunctionCandidate) []FunctionCandidate {
+	seen := make(map[uint64]struct{}, len(a))
+	for _, candidate := range a {
+		seen[candidate.Address] = struct{}{}
+	}
+	merged := append([]FunctionCandidate(nil), a...)
+	for _, candidate := range b {
+		if _, ok := seen[candidate.Address]; !ok {
+			merged = append(merged, candidate)
+		}
+	}
+	slices.SortFunc(merged, func(a, b FunctionCandidate) int {
+		return cmp.Compare(a.Address, b.Address)
+	})
+	return merged
+}
+
+// isENDBR reports whether the 4 bytes at code[i:i+4] encode an ENDBR64
+// (F3 0F 1E FA) or ENDBR32 (F3 0F 1E FB) instruction.
+// golang.org/x/arch/x86/x86asm does not recognise these CET instructions,
+// so callers must skip them explicitly before invoking the decoder.
+func isENDBR(code []byte, i int) bool {
+	return i+4 <= len(code) &&
+		code[i] == endbr64Byte0 &&
+		code[i+1] == endbr64Byte1 &&
+		code[i+2] == endbr64Byte2 &&
+		(code[i+3] == endbr64Byte3 || code[i+3] == endbr32Byte3)
 }
 
 func detectProloguesAMD64(code []byte, baseAddr uint64) ([]Prologue, error) {
@@ -439,34 +470,4 @@ func detectProloguesARM64(code []byte, baseAddr uint64) ([]Prologue, error) {
 	}
 
 	return result, nil
-}
-
-// DetectProloguesFromELF parses an ELF binary from the given reader, extracts
-// the .text section, and returns detected function prologues.
-// The architecture is inferred from the ELF header.
-func DetectProloguesFromELF(r io.ReaderAt) ([]Prologue, error) {
-	f, err := elf.NewFile(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse ELF file: %w", err)
-	}
-	defer f.Close()
-
-	textSec := f.Section(".text")
-	if textSec == nil {
-		return nil, fmt.Errorf("no .text section found")
-	}
-
-	code, err := textSec.Data()
-	if err != nil && err != io.EOF {
-		return nil, fmt.Errorf("failed to read .text section: %w", err)
-	}
-
-	switch f.Machine {
-	case elf.EM_X86_64:
-		return detectProloguesAMD64(code, textSec.Addr)
-	case elf.EM_AARCH64:
-		return detectProloguesARM64(code, textSec.Addr)
-	default:
-		return nil, fmt.Errorf("unsupported ELF machine: %s", f.Machine)
-	}
 }

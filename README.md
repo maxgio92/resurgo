@@ -35,7 +35,7 @@ Candidates from all three signals are merged and scored. ELF-specific false-posi
 
 When the binary contains an `.eh_frame` section, resurgo parses its FDE (Frame Description Entry) records and uses their `initial_location` fields as a high-confidence function entry set. These addresses were written by the compiler - not inferred by heuristics - and are typically present in stripped ELF binaries where `.symtab` and `.debug_*` are long gone.
 
-When `.eh_frame` is present it acts as an authoritative whitelist: disassembly candidates not covered by any FDE are dropped as noise, and FDE entries with no matching disassembly candidate are promoted directly. See [docs/CFI.md](docs/CFI.md).
+The `EhFrameDetector` emits these addresses as candidates. The `EhFrameFilter` then retains only candidates confirmed by an FDE, dropping disassembly noise. See [docs/CFI.md](docs/CFI.md).
 
 ## Usage
 
@@ -45,15 +45,15 @@ When `.eh_frame` is present it acts as an authoritative whitelist: disassembly c
 package main
 
 import (
+    "debug/elf"
     "fmt"
     "log"
-    "os"
 
     "github.com/maxgio92/resurgo"
 )
 
 func main() {
-    f, err := os.Open("./myapp")
+    f, err := elf.Open("./myapp")
     if err != nil {
         log.Fatal(err)
     }
@@ -83,50 +83,46 @@ func main() {
 
 ### Raw bytes (format-agnostic)
 
+For non-ELF binaries or raw memory dumps, use the lower-level primitives directly:
+
 ```go
-candidates, err := resurgo.DetectFunctions(data, 0x400000, resurgo.ArchAMD64)
+prologues, err := resurgo.DetectPrologues(data, 0x400000, resurgo.ArchAMD64)
+edges, err := resurgo.DetectCallSites(data, 0x400000, resurgo.ArchAMD64)
 ```
 
 ## API Reference
 
 ```go
-// DetectFunctions merges prologue, call-site, and boundary signals on raw
-// machine code bytes. baseAddr is the virtual address of the first byte of
-// code. arch selects architecture-specific detection logic.
-func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandidate, error)
+// DetectFunctionsFromELF runs all detectors then all filters against f and
+// returns a deduplicated, sorted slice of function candidates.
+// Architecture is inferred from the ELF header.
+// opts may include WithDetectors or WithFilters to replace either pipeline.
+func DetectFunctionsFromELF(f *elf.File, opts ...Option) ([]FunctionCandidate, error)
 
-// DetectFunctionsFromELF parses an ELF binary, runs all detection signals,
-// applies false-positive filters (PLT ranges, intra-function jump targets),
-// and, when .eh_frame is present, uses CFI FDE entries as a whitelist.
-// Architecture is inferred from the ELF header. opts may include WithFilters
-// to replace the default filter pipeline.
-func DetectFunctionsFromELF(r io.ReaderAt, opts ...Option) ([]FunctionCandidate, error)
+// WithDetectors replaces the default detector pipeline.
+// Detectors run in order; results are merged before filtering.
+func WithDetectors(detectors ...CandidateDetector) Option
 
-// WithFilters replaces the active filter pipeline. filters run in the order
-// provided. Pass no arguments to disable all filters.
+// WithFilters replaces the default filter pipeline.
+// Filters run in order. Pass no arguments to disable all filters.
 func WithFilters(filters ...CandidateFilter) Option
 
+// Built-in detectors, enabled by default in the order listed:
+var DisasmDetector   CandidateDetector  // prologue, call-site, and alignment-boundary detection
+var EhFrameDetector  CandidateDetector  // emits candidates from .eh_frame FDE records
+
 // Built-in filters, enabled by default in the order listed:
-var PLTFilter     CandidateFilter  // removes PLT-section candidates
 var CETFilter     CandidateFilter  // drops non-ENDBR64 aligned entries on CET AMD64 binaries
-var EhFrameFilter CandidateFilter  // applies .eh_frame FDE whitelist
+var EhFrameFilter CandidateFilter  // retains only FDE-confirmed candidates
+var PLTFilter     CandidateFilter  // removes PLT-section candidates (always last)
 
 // DetectPrologues scans raw machine code bytes for architecture-specific
 // function prologue patterns. Works on any binary format.
 func DetectPrologues(code []byte, baseAddr uint64, arch Arch) ([]Prologue, error)
 
-// DetectProloguesFromELF parses an ELF binary and returns detected function
-// prologues. Architecture is inferred from the ELF header.
-func DetectProloguesFromELF(r io.ReaderAt) ([]Prologue, error)
-
 // DetectCallSites scans raw machine code bytes for CALL and JMP instructions
 // and returns their resolved target addresses. Works on any binary format.
 func DetectCallSites(code []byte, baseAddr uint64, arch Arch) ([]CallSiteEdge, error)
-
-// DetectCallSitesFromELF parses an ELF binary and returns detected call sites,
-// filtered to targets within the .text section.
-// Architecture is inferred from the ELF header.
-func DetectCallSitesFromELF(r io.ReaderAt) ([]CallSiteEdge, error)
 ```
 
 Key types:
@@ -157,40 +153,43 @@ type FunctionCandidate struct {
 
 ```
 +------------------+
-|   ELF Binary     |
+|   *elf.File      |
 +------------------+
-         |
-         v
-+------------------+
-|   ELF Parser     |  (debug/elf)
-+--------+---------+
          |
          +-------------------------------+
          |                               |
          v                               v
 +------------------+           +------------------+
-|  Disassembler    |           |   CFI Parser     |
+|  DisasmDetector  |           | EhFrameDetector  |
 |  (.text bytes)   |           |   (.eh_frame)    |
 +---+---------+----+           +--------+---------+
     |         |    |                    |
     v         v    v                    v
 +------+ +------+ +--------+  +------------------+
 |Prolog| |Call  | |Boundary|  | FDE entry VAs    |
-|ues   | |Sites | |Analysis|  | (whitelist)      |
+|ues   | |Sites | |Analysis|  | (DetectionCFI)   |
 +--+---+ +--+---+ +---+----+  +--------+---------+
    |        |         |                |
-   +--------+---------+                |
-            v                          |
-   +------------------+                |
-   | DetectFunctions  |                |
-   | (merge + score)  |                |
-   +--------+---------+                |
-            |                          |
-            v                          |
-   +------------------+                |
-   |   FP Filters     | <--------------+
-   |  PLT, anchor,    |
-   |  CFI whitelist   |
+   +--------+---------+----------------+
+            v
+   +------------------+
+   | mergeCandidates  |
+   | (dedup by addr)  |
+   +--------+---------+
+            |
+            v
+   +------------------+
+   |   CETFilter      |  drops non-ENDBR64 aligned entries (CET binaries)
+   +--------+---------+
+            |
+            v
+   +------------------+
+   |  EhFrameFilter   |  retains only FDE-confirmed candidates
+   +--------+---------+
+            |
+            v
+   +------------------+
+   |   PLTFilter      |  removes PLT-section candidates
    +--------+---------+
             |
             v
