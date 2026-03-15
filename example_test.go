@@ -81,7 +81,7 @@ func ExampleDetectCallSitesFromELF() {
 	}
 }
 
-func ExampleDetectFunctions() {
+func ExampleDetectFunctionsFromCode() {
 	// x86-64 code with prologue and call:
 	// 0x1000: push rbp; mov rbp, rsp
 	// 0x1004: call 0x1020
@@ -103,7 +103,7 @@ func ExampleDetectFunctions() {
 	code[0x22] = 0x89
 	code[0x23] = 0xe5
 
-	candidates, err := resurgo.DetectFunctions(code, 0x1000, resurgo.ArchAMD64)
+	candidates, err := resurgo.DetectFunctionsFromCode(code, 0x1000, resurgo.ArchAMD64)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -472,7 +472,7 @@ func TestDetectFunctions(t *testing.T) {
 
 	// No code at 0x40 (would be called target without prologue in a real scenario)
 
-	candidates, err := resurgo.DetectFunctions(code, 0, resurgo.ArchAMD64)
+	candidates, err := resurgo.DetectFunctionsFromCode(code, 0, resurgo.ArchAMD64)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -583,7 +583,7 @@ func TestDetectCallSites_EmptyInput(t *testing.T) {
 }
 
 func TestDetectFunctions_UnsupportedArch(t *testing.T) {
-	_, err := resurgo.DetectFunctions([]byte{0x00}, 0, resurgo.Arch("mips"))
+	_, err := resurgo.DetectFunctionsFromCode([]byte{0x00}, 0, resurgo.Arch("mips"))
 	if err == nil {
 		t.Fatal("expected error for unsupported architecture, got nil")
 	}
@@ -607,7 +607,7 @@ func TestDetectFunctions_JumpTarget(t *testing.T) {
 	code[0x04] = 0x00
 	code[0x10] = 0xC3 // ret
 
-	candidates, err := resurgo.DetectFunctions(code, 0, resurgo.ArchAMD64)
+	candidates, err := resurgo.DetectFunctionsFromCode(code, 0, resurgo.ArchAMD64)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

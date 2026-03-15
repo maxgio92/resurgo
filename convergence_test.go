@@ -31,7 +31,7 @@ func arm64BranchInsn(opBase uint32, source, target uint64) uint32 {
 	return opBase | imm26
 }
 
-// assertConvergence calls DetectFunctions, logs all candidates, and asserts
+// assertConvergence calls DetectFunctionsFromCode, logs all candidates, and asserts
 // minimum convergence between prologue and call-site detection.
 // minTotal is the minimum number of candidates expected, minBoth the minimum
 // number of "prologue-callsite" candidates, and minRatio the minimum convergence ratio
@@ -39,9 +39,9 @@ func arm64BranchInsn(opBase uint32, source, target uint64) uint32 {
 func assertConvergence(t *testing.T, code []byte, baseAddr uint64, arch resurgo.Arch, minTotal, minBoth int, minRatio float64) {
 	t.Helper()
 
-	candidates, err := resurgo.DetectFunctions(code, baseAddr, arch)
+	candidates, err := resurgo.DetectFunctionsFromCode(code, baseAddr, arch)
 	if err != nil {
-		t.Fatalf("DetectFunctions: %v", err)
+		t.Fatalf("DetectFunctionsFromCode: %v", err)
 	}
 
 	counts := make(map[resurgo.DetectionType]int)

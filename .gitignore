@@ -1,3 +1,6 @@
 /testdata/demo-app
 /resurgo
 /.idea
+-e resurgo.test
+resurgo.test.orig
+probe
