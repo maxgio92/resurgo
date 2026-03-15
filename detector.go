@@ -187,17 +187,20 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 // DetectFunctionsFromELF parses an ELF binary from the given reader, extracts
 // the .text section, and returns detected function candidates using combined
 // prologue detection, call site analysis, and alignment-based boundary
-// detection, followed by FP filters (PLT section ranges, intra-function jump
-// targets). When .eh_frame is present, FDE entries are used as a whitelist to
-// discard disassembly candidates that are not confirmed by the compiler, and
-// any function entries visible only in .eh_frame are added to the result.
+// detection, followed by FP filters (intra-function jump targets, PLT stubs).
+// When .eh_frame is present, FDE entries are used as a whitelist to discard
+// disassembly candidates that are not confirmed by the compiler, and any
+// function entries visible only in .eh_frame are added to the result.
 // The architecture is inferred from the ELF header.
 //
-// By default the full filter pipeline (PLTFilter, CETFilter, EhFrameFilter)
-// is applied. opts may include WithFilters to replace the default pipeline.
+// By default the full filter pipeline (CETFilter, EhFrameFilter, PLTFilter)
+// is applied. PLTFilter runs last so that any PLT-section addresses
+// reintroduced by EhFrameFilter (via FDE records for linker-generated stubs)
+// are always evicted regardless of detection method.
+// opts may include WithFilters to replace the default pipeline.
 func DetectFunctionsFromELF(r io.ReaderAt, opts ...Option) ([]FunctionCandidate, error) {
 	o := &options{
-		filters: []CandidateFilter{PLTFilter, CETFilter, EhFrameFilter},
+		filters: []CandidateFilter{CETFilter, EhFrameFilter, PLTFilter},
 	}
 	for _, opt := range opts {
 		opt(o)
