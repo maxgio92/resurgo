@@ -18,7 +18,7 @@
 // detection type, and a confidence rating.
 //
 // For format-agnostic use (non-ELF binaries, raw memory dumps) use
-// [DetectFunctions], which accepts raw machine code bytes and a base address.
+// [DetectFunctionsFromCode], which accepts raw machine code bytes and a base address.
 //
 // Lower-level APIs ([DetectPrologues], [DetectCallSites] and their FromELF
 // variants) are available when only a single signal is needed.

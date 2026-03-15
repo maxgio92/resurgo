@@ -74,10 +74,10 @@ func isENDBR(code []byte, i int) bool {
 		(code[i+3] == endbr64Byte3 || code[i+3] == endbr32Byte3)
 }
 
-// DetectFunctions combines prologue detection, call site analysis, and
+// DetectFunctionsFromCode combines prologue detection, call site analysis, and
 // alignment-based boundary detection to identify function entry points.
 // Functions detected by multiple methods receive higher confidence ratings.
-func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandidate, error) {
+func DetectFunctionsFromCode(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandidate, error) {
 	// Detect prologues
 	prologues, err := DetectPrologues(code, baseAddr, arch)
 	if err != nil {
@@ -184,31 +184,11 @@ func DetectFunctions(code []byte, baseAddr uint64, arch Arch) ([]FunctionCandida
 	return result, nil
 }
 
-// DetectFunctionsFromELF parses an ELF binary from the given reader, extracts
-// the .text section, and returns detected function candidates using combined
-// prologue detection, call site analysis, and alignment-based boundary
-// detection, followed by FP filters (PLT section ranges, intra-function jump
-// targets). When .eh_frame is present, FDE entries are used as a whitelist to
-// discard disassembly candidates that are not confirmed by the compiler, and
-// any function entries visible only in .eh_frame are added to the result.
+// DisasmDetector is a CandidateDetector that runs the disassembly-based
+// pipeline (prologue matching, call-site analysis, alignment-based boundary
+// detection) against the .text section of f.
 // The architecture is inferred from the ELF header.
-//
-// By default the full filter pipeline (PLTFilter, CETFilter, EhFrameFilter)
-// is applied. opts may include WithFilters to replace the default pipeline.
-func DetectFunctionsFromELF(r io.ReaderAt, opts ...Option) ([]FunctionCandidate, error) {
-	o := &options{
-		filters: []CandidateFilter{PLTFilter, CETFilter, EhFrameFilter},
-	}
-	for _, opt := range opts {
-		opt(o)
-	}
-
-	f, err := elf.NewFile(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse ELF file: %w", err)
-	}
-	defer f.Close()
-
+func DisasmDetector(f *elf.File) ([]FunctionCandidate, error) {
 	textSec := f.Section(".text")
 	if textSec == nil {
 		return nil, fmt.Errorf("no .text section found")
@@ -229,9 +209,57 @@ func DetectFunctionsFromELF(r io.ReaderAt, opts ...Option) ([]FunctionCandidate,
 		return nil, fmt.Errorf("unsupported ELF machine: %s", f.Machine)
 	}
 
-	candidates, err := DetectFunctions(code, textSec.Addr, arch)
+	return DetectFunctionsFromCode(code, textSec.Addr, arch)
+}
+
+// mergeCandidates merges two candidate slices, deduplicating by address.
+// When the same address appears in both, the entry from a takes precedence.
+func mergeCandidates(a, b []FunctionCandidate) []FunctionCandidate {
+	seen := make(map[uint64]struct{}, len(a))
+	for _, c := range a {
+		seen[c.Address] = struct{}{}
+	}
+	merged := append([]FunctionCandidate(nil), a...)
+	for _, c := range b {
+		if _, ok := seen[c.Address]; !ok {
+			merged = append(merged, c)
+		}
+	}
+	slices.SortFunc(merged, func(a, b FunctionCandidate) int {
+		return cmp.Compare(a.Address, b.Address)
+	})
+	return merged
+}
+
+// DetectFunctionsFromELF parses an ELF binary from the given reader and
+// returns detected function candidates by running all detectors then all
+// filters in order.
+//
+// By default the detector pipeline is [DisasmDetector, EhFrameDetector] and
+// the filter pipeline is [CETFilter, EhFrameFilter, PLTFilter].
+// opts may include WithDetectors or WithFilters to replace either pipeline.
+func DetectFunctionsFromELF(r io.ReaderAt, opts ...Option) ([]FunctionCandidate, error) {
+	o := &options{
+		detectors: []CandidateDetector{DisasmDetector, EhFrameDetector},
+		filters:   []CandidateFilter{CETFilter, EhFrameFilter, PLTFilter},
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	f, err := elf.NewFile(r)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse ELF file: %w", err)
+	}
+	defer f.Close()
+
+	var candidates []FunctionCandidate
+	for _, detect := range o.detectors {
+		candidate, err := detect(f)
+		if err != nil {
+			return nil, err
+		}
+		candidates = mergeCandidates(candidates, candidate)
 	}
 
 	for _, filter := range o.filters {
